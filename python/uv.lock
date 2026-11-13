@@ -3,7 +3,7 @@ revision = 5
 requires-python = ">=3.10"
 
 [[package]]
-name = "nfc-experiment"
+name = "m5nfc-ft232h-experiment"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

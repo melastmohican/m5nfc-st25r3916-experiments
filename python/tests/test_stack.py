@@ -76,6 +76,27 @@ def test_no_card_times_out():
         select_card(rf)
 
 
+def test_select_retries_after_field_reset():
+    chip, rf = make()
+    rf.init()
+    calls = {"short": 0, "reset": 0}
+    real_short, real_reset = rf.send_short, rf.field_reset
+
+    def flaky_short(*a, **k):
+        calls["short"] += 1
+        if calls["short"] == 1:  # tag stuck in ACTIVE: first WUPA unanswered
+            raise NfcTimeout("no response from card")
+        return real_short(*a, **k)
+
+    def counting_reset(*a, **k):
+        calls["reset"] += 1
+        return real_reset(*a, **k)
+
+    rf.send_short, rf.field_reset = flaky_short, counting_reset
+    assert select_card(rf).uid == UID
+    assert calls["reset"] == 1
+
+
 def test_ndef_roundtrip_through_stack():
     chip, rf = make()
     rf.init()

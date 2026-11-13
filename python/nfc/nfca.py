@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from .st25r3916 import CMD_TX_WUPA, NfcError
+from .st25r3916 import CMD_TX_WUPA, NfcError, NfcTimeout
 
 CT = 0x88  # cascade tag
 T2_READ = 0x30
@@ -63,8 +63,19 @@ def _select(rf: Reader, sel: int, uid_cl: bytes) -> int:
 
 
 def select_card(rf: Reader) -> Card:
-    """WUPA + cascade-level anticollision/select. Supports 4- and 7-byte UIDs."""
-    atqa = rf.send_short(CMD_TX_WUPA)
+    """WUPA + cascade-level anticollision/select. Supports 4- and 7-byte UIDs.
+
+    A tag left in ACTIVE state by an earlier select ignores WUPA until its
+    field is power-cycled, so on a timeout reset the field once and retry.
+    """
+    try:
+        atqa = rf.send_short(CMD_TX_WUPA)
+    except NfcTimeout:
+        reset = getattr(rf, "field_reset", None)
+        if reset is None:
+            raise
+        reset()
+        atqa = rf.send_short(CMD_TX_WUPA)
     if len(atqa) != 2:
         raise NfcError(f"bad ATQA: {atqa.hex()}")
     uid = b""
