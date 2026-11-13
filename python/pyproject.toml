@@ -1,0 +1,9 @@
+[project]
+name = "m5nfc-ft232h-experiment"
+version = "0.1.0"
+description = "Read/write NTAG215 from macOS via FT232H + M5Stack ST25R3916 unit"
+requires-python = ">=3.10"
+dependencies = ["pyftdi>=0.55"]
+
+[tool.setuptools]
+packages = ["nfc"]
