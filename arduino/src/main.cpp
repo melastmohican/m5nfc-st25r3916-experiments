@@ -3,6 +3,7 @@
 #include <Wire.h>
 
 #include "Cli.h"
+#include "CcidDriver.h"
 #include "St25r3916.h"
 #include "WireTransport.h"
 
@@ -10,6 +11,10 @@ static nfc::WireTransport transport;
 static nfc::St25r3916 rf(transport);
 static nfc::Cli serialCli(Serial, rf);
 static bool chipReady = false;
+
+// The core calls this before USB.begin() and its own Serial.begin(), i.e. before the USB
+// configuration descriptor is built. Registering the CCID interface later has no effect.
+void initVariant() { nfc::ccidBegin(); }
 
 void setup() {
   Serial.begin(115200);
