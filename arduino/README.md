@@ -2,7 +2,7 @@
 
 Same goal as Phase B (Feather RP2350 as a CCID reader for the NFC unit), written in C++ with the Arduino-Pico core under PlatformIO.
 
-Status: chip driver, ISO14443-A layer, NTAG215 memory layer and NDEF ported and verified on hardware (dump, NDEF read/write, write guard). Serial CLI and CCID not started. See `../.agents/notes/PLAN.md` for the plan.
+Status: full driver ported and verified on hardware, with a serial CLI that mirrors the Python one (50/50 reliability cycles). CCID not started. See `../.agents/notes/PLAN.md` for the plan.
 
 ## Notes
 - TinyUSB in the Pico SDK has no mainline CCID class; add a custom class driver through the app-driver hook.
@@ -25,5 +25,17 @@ Qwiic I2C is I2C1: SDA GP2, SCL GP3.
 - `WireTransport.h`: Arduino `Wire` transport. On this board `Wire` is I2C1 on GP2/GP3 (Qwiic). Do not use `Wire1` (I2C0, unconnected pin): `Wire1.setSDA(2)` panics and hangs the board; recover with BOOTSEL held while plugging in.
 - `Ntag215.h/.cpp`: 135-page model, dump, page write with lock/config guard and read-back verify, NDEF read/write (identical pages are skipped).
 - `Ndef.h/.cpp`: text and URI records, TLV wrap, no heap (caller buffers).
-- `main.cpp`: one-letter serial test harness (`c d D n w r g`); the full CLI is a later step.
+- `Cli.h/.cpp`: line-based serial CLI, same commands and output as `python -m nfc.cli`, plus `cycles`.
+- `main.cpp`: starts the chip and the CLI on USB serial.
 Ports of `python/nfc`: keep fixes in sync by hand.
+
+## Serial CLI
+Open the USB serial port at 115200 (the board waits 3 s after boot). One command per line; every command ends with `ok` or `error: ...`.
+
+    chip | detect | dump | read-ndef
+    write-ndef [--text "hello"] [--lang en] [--uri https://example.com]
+    write-page <page> <8 hex digits> [--force]
+    cycles [N]        # N x (select + full dump, compared with the first); default 50
+    help
+
+Lock, config and capability pages need `--force` and are one-way (same as the Python CLI).
