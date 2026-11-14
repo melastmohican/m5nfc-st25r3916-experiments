@@ -69,3 +69,7 @@ Pick a folder and follow its README: it lists the hardware, the wiring, the setu
 - [Adafruit FT232H breakout](https://shop.adafruit.com/products/2266) for `python/`
 - Adafruit Feather RP2350 (the PSRAM/HSTX model) for `micropython/`, `arduino/` and `tinygo/`
 - NTAG215 tags
+
+## License
+
+[MIT](LICENSE).
