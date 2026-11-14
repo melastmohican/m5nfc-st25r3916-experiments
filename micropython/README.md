@@ -46,4 +46,4 @@ Extra checks (Mac side): `pcsc_monitor.py 45` prints live insert/remove events; 
 
 ## Install / recovery
     mpremote cp main.py :          # reader starts ~4 s after power-up
-To get the REPL back: during the 4 s boot window `mpremote exec ...` interrupts main.py (verified), or hold BOOTSEL in that window (main.py then skips the reader; not yet tested). Otherwise replug and retry.
+To get the REPL back: during the 4 s boot window `mpremote exec ...` interrupts main.py (verified), or hold BOOTSEL for ~3 s right after plugging in (main.py then skips the reader and the REPL stays up; verified). Do not hold BOOTSEL at the moment of power-up: that enters the ROM bootloader (RP2350 drive) instead. Otherwise replug and retry.
