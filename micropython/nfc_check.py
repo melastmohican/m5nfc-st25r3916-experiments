@@ -1,4 +1,4 @@
-"""Bring-up check on the Feather: chip ID, tag detect, NDEF read, first pages.
+"""Hardware check on the Feather: chip ID, tag detect, NDEF read, first pages.
 
     mpremote cp -r nfc :            # once
     mpremote run nfc_check.py

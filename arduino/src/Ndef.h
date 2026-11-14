@@ -1,5 +1,5 @@
 // Minimal NDEF encode/decode for Type 2 tags (text and URI records).
-// C++ port of python/nfc/ndef.py. No heap: callers provide the buffers.
+// No heap: callers provide the buffers.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

@@ -1,11 +1,10 @@
-"""ST25R3916 NFC front-end driver over I2C (M5Stack Unit NFC, 7-bit addr 0x50).
+"""ST25R3916 NFC front-end driver over I2C (M5Stack NFC unit, 7-bit address 0x50).
 
-Status: written from the ST datasheet (DS12484) and the init sequence of
-nicolasmmb/M5Unit-NFC-Go. Verified only against a software fake chip
-(tests/fakechip.py). NOT yet run on real hardware; items marked VERIFY are the
-first places to look if bring-up misbehaves.
+The init sequence follows the M5Unit-NFC-Go driver and the ST25R3916 datasheet (DS12484).
+The driver talks to a Transport (write / exchange): FtdiTransport on real hardware, and the
+software fake chip in tests/fakechip.py in the tests.
 
-I2C frame formats (from the Go reference driver):
+I2C frame formats:
     register read   write [reg|0x40] then read N bytes (auto-increment)
     register write  write [reg, val]
     space-B read    write [0xFB, (reg&0x3F)|0x40] then read 1
@@ -62,7 +61,7 @@ REG_IC_IDENTITY = 0x3F
 OP_CTRL_EN = 0x80
 OP_CTRL_TX_EN = 0x08
 OP_CTRL_RX_EN = 0x40
-AUX_NO_CRC_RX = 0x80  # VERIFY: bit position of no_crc_rx in AUX (0x0A)
+AUX_NO_CRC_RX = 0x80  # no_crc_rx bit in AUX (0x0A); position unverified. transceive() strips CRC_A itself.
 AUX_DISPLAY_OSC_OK = 0x10
 
 # IRQ bits, combined as main | timer<<8 | error<<16 | target<<24
@@ -183,7 +182,7 @@ class St25r3916:
         self.identify()
         self.command(CMD_SET_DEFAULT, delay=0.010)
         self.command(CMD_TEST_ACCESS, bytes([0x04, 0x10]))
-        # Sequence below is transcribed from the M5Unit-NFC-Go reference.
+        # Init sequence follows the M5Unit-NFC-Go driver.
         self.write_reg(0x00, 0x10)
         self.write_reg(0x01, 0x84)
         self.write_reg(0x28, 0xD0)

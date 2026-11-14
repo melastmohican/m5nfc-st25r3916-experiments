@@ -1,5 +1,4 @@
 // ISO14443-A activation (WUPA, anticollision, select) and Type 2 tag READ/WRITE.
-// C++ port of python/nfc/nfca.py.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

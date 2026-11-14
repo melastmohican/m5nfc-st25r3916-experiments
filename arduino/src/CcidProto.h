@@ -1,5 +1,5 @@
 // CCID message handling, independent of USB and of the NFC chip.
-// C++ port of micropython/ccid_proto.py. Plain C++: builds on the Mac for host tests.
+// Plain C++ with no Arduino dependency, so it builds on the Mac for host tests (test/run.sh).
 //
 // Slot::handle() turns one PC_to_RDR bulk message into the RDR_to_PC reply, talking to a Backend.
 #pragma once

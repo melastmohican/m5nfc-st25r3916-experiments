@@ -1,5 +1,4 @@
 // NTAG215 memory model: 135 pages x 4 bytes, user memory = pages 4-129 (504 bytes).
-// C++ port of python/nfc/ntag215.py.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>

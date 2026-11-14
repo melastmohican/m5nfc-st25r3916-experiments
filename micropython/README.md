@@ -1,57 +1,114 @@
-# Phase B: MicroPython + USB CCID
+# micropython: USB NFC reader (PC/SC) on a Feather RP2350
 
-Feather RP2350 (STEMMA QT) -> M5Stack NFC Unit. The Feather presents itself to the Mac as a CCID smart-card reader, so PC/SC tools work with no custom Mac software.
+MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`.
 
-Status: gate test passed; driver ported and verified on the Feather (chip ID, detect, NDEF read, page reads). CCID reader works end to end over PC/SC (UID, page read, page write verified from the Mac via pyscard). Live insert/remove events and an NDEF round trip over PC/SC also verified. Installed as main.py and verified from a cold boot. See `../.agents/notes/PLAN.md` for the plan.
+```
+Mac --USB (CCID / PC/SC)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
+```
 
-## Gate test (passed)
-Board: Feather RP2350, MicroPython v1.29.0 (`ADAFRUIT_FEATHER_RP2350` UF2), plus `mpremote mip install usb-device`.
+## What you need
 
-    mpremote cp ccid_stub.py :ccid_stub.py
-    mpremote exec "import ccid_stub"     # USB re-enumerates; an mpremote 'Device not configured' error here is expected
-    uv run --with pyscard python host_check.py    # expect: Experiment NFC CCID stub
-
-To run it at every boot, copy it to the board as `main.py`.
+- Adafruit Feather RP2350 (the PSRAM/HSTX model) and a USB cable
+- [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), SKU U216
+- A Qwiic / STEMMA QT cable to connect them
+- NTAG215 tags
+- On the Mac: [uv](https://docs.astral.sh/uv/) and `mpremote` (`uv tool install mpremote`)
 
 ## Wiring
-Qwiic/STEMMA QT for SDA/SCL/GND (3.3V). The NFC unit's 5V comes from the Feather's USB pin, not the connector.
 
-## Plan
-1. Gate test (stub CCID).
-2. Port the driver from `../python/nfc/` (replace transport; no `dataclasses` or `typing.Protocol`).
-3. CCID bulk messages and pseudo-APDU mapping (`FF CA`, `FF B0`, `FF D6`).
-4. Test with `pcsc_scan` and pyscard.
+Plug the unit into the Feather's Qwiic (STEMMA QT) port. That gives SDA, SCL and GND, plus 3.3V on the unit's power pin. The Qwiic port is I2C1 on GP2 (SDA) and GP3 (SCL).
 
-## Driver port (done)
-`nfc/` is a copy of `../python/nfc/` with `dataclasses`, `typing.Protocol` and `from __future__` removed, a `time.ticks_ms` clock, and `transport.py` using `machine.I2C` (Qwiic port = I2C1, SDA GP2, SCL GP3). Keep fixes in sync by hand with the Python version.
+The unit has an on-board regulator and pull-ups to its own 3.3V rail, and it runs from the Qwiic port's 3.3V. Only a tag lying on the unit has been tested for read range. If you need more range, the unit's 5V pin can instead be fed from the Feather's `USB` pin; that has not been tried.
 
-    mpremote cp -r nfc :
-    mpremote run nfc_check.py     # chip ID, UID, NDEF, first pages
+## Install
 
-The unit works from Qwiic's 3.3V on its 5V pin. Read range at 3.3V is untested beyond a tag laid on the unit.
+1. Flash MicroPython. Hold BOOTSEL while plugging the Feather in, then copy the Feather RP2350 firmware from <https://micropython.org/download/ADAFRUIT_FEATHER_RP2350/> onto the `RP2350` drive (tested with v1.29.0).
+2. Install the USB device library. The Mac downloads it and copies it over, so the board needs no network:
+   ```
+   mpremote mip install usb-device
+   ```
+3. From this folder, copy the files to the board:
+   ```
+   mpremote cp -r nfc :
+   mpremote cp main.py ccid_proto.py nfc_backend.py ccid_reader.py :
+   ```
+4. Unplug and replug the Feather. About 4 seconds later the Mac lists a reader named `Experiment NFC CCID reader`.
 
-## CCID reader (working, run from RAM)
-Files: `ccid_proto.py` (CCID messages, host-testable), `nfc_backend.py` (pseudo-APDUs -> tag), `ccid_reader.py` (USB glue + main loop), `main.py` (boot window), `run_reader.py` (start now, no main.py).
+## Use it from the Mac
 
-    uv run --with pytest python -m pytest tests -q       # protocol layer, on the Mac
-    mpremote cp ccid_proto.py nfc_backend.py ccid_reader.py run_reader.py :
-    mpremote exec "import run_reader"                   # REPL port disappears; mpremote then errors, that is expected
-    uv run --with pyscard python pcsc_check.py          # UID, reads, write guard over PC/SC
+With a tag on the unit:
 
-The reader turns the USB serial REPL off. Unplug and replug the Feather to get the REPL back (nothing runs at boot until `main.py` is installed).
-Pseudo-APDUs: `FF CA 00 00 00` UID, `FF B0 00 <page> <Le>` read, `FF D6 00 <page> 04 <data>` write; lock/config pages answer 69 82.
-`main.py` starts the reader at boot after a 4 s window; hold BOOTSEL in that window to keep the REPL.
+```
+system_profiler SPSmartCardsDataType      # lists the reader, with the card's ATR
+/usr/bin/pcsctest                         # macOS's own PC/SC test program
+uv run --with pyscard python pcsc_check.py
+brew install opensc && opensc-tool -s FFCA000000
+```
 
-Extra checks (Mac side): `pcsc_monitor.py 45` prints live insert/remove events; `pcsc_ndef_roundtrip.py` writes text+URI records via `FF D6`, reads them back via `FF B0`, then restores the tag.
+The card's ATR is the standard PC/SC contactless ATR for Ultralight-family tags: `3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 03 00 00 00 00 68`. The reader tells the Mac when a card appears or disappears, so PC/SC applications get live insert and remove events.
 
-## Install / recovery
-    mpremote cp main.py :          # reader starts ~4 s after power-up
-To get the REPL back: during the 4 s boot window `mpremote exec ...` interrupts main.py (verified), or hold BOOTSEL for ~3 s right after plugging in (main.py then skips the reader and the REPL stays up; verified). Do not hold BOOTSEL at the moment of power-up: that enters the ROM bootloader (RP2350 drive) instead. Otherwise replug and retry.
+### Commands (pseudo-APDUs)
 
-## Restoring this reader after the Arduino phase
-Phase C flashes Arduino-Pico over MicroPython on the same Feather. To get the reader back:
-1. Put the board in the bootloader (hold BOOTSEL, plug in; or double-tap reset) so the `RP2350` drive appears.
-2. Copy the Feather RP2350 UF2 from https://micropython.org/download/ADAFRUIT_FEATHER_RP2350/ onto it (tested: `ADAFRUIT_FEATHER_RP2350-20260824-v1.29.0.uf2`).
-3. `mpremote mip install usb-device`
-4. From this folder: `mpremote cp -r nfc :` then `mpremote cp main.py ccid_proto.py nfc_backend.py ccid_reader.py :`
-5. Replug; the reader starts after the 4 s boot window.
+| APDU | Meaning | Reply |
+|---|---|---|
+| `FF CA 00 00 <Le>` | UID (`Le` = 0 returns all of it) | UID + `90 00` |
+| `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16) | data + `90 00` |
+| `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back to verify | `90 00` |
+
+Status words other than success: `6A 82` page out of range, `69 82` write refused (UID, lock bytes, capability container, configuration and password pages), `65 81` memory failure, `67 00` wrong length, `6B 00` bad P1/P2, `6D 00` unknown instruction, `6E 00` unknown class. User memory is pages 4 to 129.
+
+Reads of up to 48 bytes per command are tested.
+
+## Boot and recovery
+
+`main.py` waits 4 seconds and then starts the reader. While the reader runs, the board's USB serial port (the REPL) is off, so `mpremote` cannot reach it. Ways back in:
+
+- During the 4-second window the REPL is still up: run `mpremote exec "..."` right after plugging in and it interrupts `main.py`.
+- Or hold BOOTSEL for about 3 seconds right after plugging in. `main.py` then skips the reader and leaves the REPL up.
+
+Do not hold BOOTSEL at the moment of plugging in: that enters the ROM bootloader instead, and the `RP2350` drive appears.
+
+Errors in the reader loop are appended to `/ccid.log` on the board.
+
+To try the reader without `main.py`, copy the files except `main.py`, then run `mpremote exec "import run_reader"`. The reader starts from RAM, and a replug brings the REPL back.
+
+With the REPL available, `mpremote run nfc_check.py` prints the chip identity, the tag's UID and NDEF records, and the first pages, without the USB reader.
+
+Only one firmware can be on the Feather at a time. [`../arduino`](../arduino) builds the same reader as C++ firmware and replaces this one on the board. To come back, repeat the install steps.
+
+## Files
+
+| File | Role |
+|---|---|
+| `main.py` | Boot script: 4-second window, then starts the reader. |
+| `ccid_reader.py` | USB CCID interface and the main loop. All NFC and I2C work runs in the loop, never in USB callbacks. |
+| `ccid_proto.py` | CCID message handling: slot status, power on and off, transfer blocks, parameters. Independent of USB and the chip. |
+| `nfc_backend.py` | Maps the pseudo-APDUs above onto the tag. |
+| `nfc/` | The ST25R3916 driver and tag layers: `transport.py` (`machine.I2C`), `st25r3916.py`, `nfca.py`, `ntag215.py`, `ndef.py`. |
+| `run_reader.py` | Starts the reader from RAM, without `main.py`. |
+| `nfc_check.py` | Hardware check over the REPL. |
+| `host_check.py`, `pcsc_check.py`, `pcsc_monitor.py`, `pcsc_ndef_roundtrip.py` | Mac-side PC/SC scripts, below. |
+| `tests/` | Host tests for `ccid_proto.py`. |
+
+## Tests
+
+On the Mac, no hardware needed:
+
+```
+uv run --with pytest python -m pytest tests -q      # 11 tests of the CCID message layer
+```
+
+With the reader running and a tag on the unit (run each as `uv run --with pyscard python <script>`):
+
+| Script | What it checks |
+|---|---|
+| `host_check.py` | The reader is listed. |
+| `pcsc_check.py` | ATR, UID, page reads, and that a write to the capability container is refused. |
+| `pcsc_monitor.py [seconds]` | Prints card insert and remove events live; lift and replace the tag while it runs. |
+| `pcsc_ndef_roundtrip.py` | Writes a text and a URI record with `FF D6`, reads them back with `FF B0`, then restores the original records. |
+
+## Limits
+
+- Type 2 tags (NTAG, Ultralight) only. Other cards are detected but not readable; DESFire needs an ISO-DEP layer that is not implemented.
+- Reads longer than 48 bytes per command are untested here. The Arduino build handles up to 255.
+- The REPL is off while the reader runs (see Boot and recovery).

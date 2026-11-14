@@ -1,4 +1,4 @@
-// ST25R3916 NFC front-end driver (M5Stack Unit NFC, I2C 0x50). C++ port of python/nfc/st25r3916.py.
+// ST25R3916 NFC front-end driver (M5Stack NFC unit, I2C 0x50).
 // The chip logic only talks to a Transport, so it does not depend on Arduino's Wire.
 //
 // I2C frame formats:

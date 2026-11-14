@@ -1,5 +1,4 @@
 // CCID backend on the NFC unit: maps PC/SC pseudo-APDUs onto an NTAG/Ultralight tag.
-// C++ port of micropython/nfc_backend.py.
 //
 //   FF CA 00 00 Le          -> UID (Le = 0: whole UID)
 //   FF B0 00 <page> <Le>    -> read Le bytes starting at <page>  (Le = 0: 16 bytes)

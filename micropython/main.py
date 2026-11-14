@@ -1,8 +1,8 @@
-"""Boot: start the CCID reader after a short window where the REPL still works.
+"""Boot script: wait 4 s, then start the CCID reader.
 
-Hold the BOOTSEL button during the 4 s window (LED on the Feather stays as is) to
-skip the reader and keep the USB serial REPL for mpremote. The reader itself turns
-the REPL port off, so this window is how you get back in.
+During the 4 s window the USB serial REPL is still up, so `mpremote` can interrupt this script.
+Holding BOOTSEL (after plugging in, not while plugging in) skips the reader and leaves the REPL.
+Once the reader runs, the REPL port is off.
 """
 import time
 

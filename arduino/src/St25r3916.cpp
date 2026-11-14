@@ -39,7 +39,7 @@ constexpr uint8_t REG_IC_IDENTITY = 0x3F;
 constexpr uint8_t OP_CTRL_EN = 0x80;
 constexpr uint8_t OP_CTRL_TX_EN = 0x08;
 constexpr uint8_t OP_CTRL_RX_EN = 0x40;
-constexpr uint8_t AUX_NO_CRC_RX = 0x80;  // VERIFY: bit position of no_crc_rx in AUX (0x0A)
+constexpr uint8_t AUX_NO_CRC_RX = 0x80;  // no_crc_rx bit in AUX (0x0A); position unverified. transceive() strips CRC_A itself.
 constexpr uint8_t AUX_DISPLAY_OSC_OK = 0x10;
 
 // IRQ bits, combined as main | timer<<8 | error<<16 | target<<24
@@ -188,7 +188,7 @@ int St25r3916::init() {
   command(CMD_SET_DEFAULT, nullptr, 0, 10);
   const uint8_t test[2] = {0x04, 0x10};
   command(CMD_TEST_ACCESS, test, 2);
-  // Sequence transcribed from the M5Unit-NFC-Go reference (same as the Python driver).
+  // Init sequence follows the M5Unit-NFC-Go driver and DS12484.
   writeReg(0x00, 0x10);
   writeReg(0x01, 0x84);
   writeReg(0x28, 0xD0);

@@ -1,55 +1,144 @@
-# Phase C: Arduino-Pico + PlatformIO + USB CCID
+# arduino: USB NFC reader and serial tool on a Feather RP2350
 
-Same goal as Phase B (Feather RP2350 as a CCID reader for the NFC unit), written in C++ with the Arduino-Pico core under PlatformIO.
+C++ firmware (Arduino-Pico, built with PlatformIO) for an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). It does two things at once over the Feather's USB cable:
 
-Status: full driver ported and verified on hardware, with a serial CLI that mirrors the Python one (50/50 reliability cycles). The CCID reader works over PC/SC next to the USB serial: UID, page read/write, locked pages refused, NDEF round trip, live card insert/remove events, reads up to 255 bytes. See `../.agents/notes/PLAN.md` for the plan.
+- **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader, so `pyscard`, OpenSC, `pcsctest` and `system_profiler` work with no custom software.
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `cycles`) for working with a tag directly.
 
-## Notes
-- TinyUSB in the Pico SDK has no mainline CCID class; add a custom class driver through the app-driver hook.
-- References: RevK's TinyUSB CCID driver, EspUsbDevice SmartCardReader example.
-- Port register logic from `../python/nfc/st25r3916.py`; M5's official library targets M5Unified.
-- Same gate test as Phase B: `pcsc_scan` must list the device.
+```
+Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
+```
+
+## What you need
+
+- Adafruit Feather RP2350 (the PSRAM/HSTX model) and a USB cable
+- [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), SKU U216
+- A Qwiic / STEMMA QT cable to connect them
+- NTAG215 tags
+- On the Mac: [PlatformIO](https://platformio.org/) (`pio`). For the tests: a C++ compiler, [uv](https://docs.astral.sh/uv/), and optionally `brew install opensc`
+
+## Wiring
+
+Plug the unit into the Feather's Qwiic (STEMMA QT) port. That gives SDA, SCL and GND, plus 3.3V on the unit's power pin, and the unit runs from it. The unit has an on-board regulator and pull-ups to its own 3.3V rail, so no level shifter is needed. Only a tag lying on the unit has been tested for read range.
+
+In Arduino, the Qwiic port is `Wire` (I2C1, SDA GP2, SCL GP3), already the default pins. Do not use `Wire1` on this board: it is I2C0 on an unconnected pin, and `Wire1.setSDA(2)` panics and hangs the board.
 
 ## Build and flash
-Board: `adafruit_feather_rp2350_hstx` (the Feather RP2350 with PSRAM; CircuitPython calls it `adafruit_feather_rp2350`), Arduino-Pico core via the maxgerhardt PlatformIO platform.
 
-    pio run                  # build (first build downloads the toolchain, about 2 minutes)
-    pio run -t upload        # needs the board in the bootloader (RP2350 drive)
+The board is `adafruit_feather_rp2350_hstx` (CircuitPython calls the same board `adafruit_feather_rp2350`), using the Arduino-Pico core through the maxgerhardt PlatformIO platform.
 
-Coming from MicroPython: `mpremote exec "import machine; machine.bootloader()"`, wait for the `RP2350` drive, then upload. Once Arduino firmware is on the board, Arduino-Pico's 1200-baud touch reboots it for uploads.
-Qwiic I2C is I2C1: SDA GP2, SCL GP3.
+```
+pio run                # build; the first build downloads the toolchain (about 2 minutes)
+pio run -t upload      # flash; picotool reboots the board into its bootloader by itself
+```
+
+If the board is hung or still runs MicroPython, put it in the bootloader by hand: hold BOOTSEL while plugging in, release after a second, and the `RP2350` drive appears. Then run `pio run -t upload`. From MicroPython, `mpremote exec "import machine; machine.bootloader()"` does the same.
+
+## Use it
+
+### As a PC/SC reader
+
+After power-up the Mac lists a reader named `Experiment NFC CCID reader`. It starts answering once the 3-second start-up delay has passed:
+
+```
+system_profiler SPSmartCardsDataType      # lists the reader, with the card's ATR
+/usr/bin/pcsctest                         # macOS's own PC/SC test program
+uv run --with pyscard python ../micropython/pcsc_check.py
+opensc-tool -s FFCA000000                 # UID through OpenSC
+```
+
+The card's ATR is the standard PC/SC contactless ATR for Ultralight-family tags: `3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 03 00 00 00 00 68`. The reader tells the Mac when a card appears or disappears, so PC/SC applications get live insert and remove events.
+
+| APDU | Meaning | Reply |
+|---|---|---|
+| `FF CA 00 00 <Le>` | UID (`Le` = 0 returns all of it) | UID + `90 00` |
+| `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16), up to 255 | data + `90 00` |
+| `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back to verify | `90 00` |
+
+Status words other than success: `6A 82` page out of range, `69 82` write refused (UID, lock bytes, capability container, configuration and password pages), `65 81` memory failure, `67 00` wrong length, `6B 00` bad P1/P2, `6D 00` unknown instruction, `6E 00` unknown class. User memory is pages 4 to 129.
+
+### As a serial command line
+
+Open the Feather's USB serial port at 115200 baud (`pio device monitor`, or any terminal). The board waits 3 seconds after power-up. Type one command per line; every command ends with a line `ok` or `error: ...`.
+
+| Command | What it does |
+|---|---|
+| `chip` | Checks that the ST25R3916 answers and prints its type and revision. |
+| `detect` | Finds a card and prints its UID, ATQA and SAK, and whether it is an NTAG215. |
+| `dump` | Prints all 135 pages (4 bytes each) as hex and ASCII. |
+| `read-ndef` | Decodes the NDEF message: text and URI records. |
+| `write-ndef [--text "T"] [--lang L] [--uri U]` | Writes a text and/or URI record, replacing the current message. Pages that already match are skipped. |
+| `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
+| `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. |
+| `help` | Lists the commands. |
+
+```
+detect
+UID:  04:64:31:66:D3:2A:81
+ATQA: 4400  SAK: 0x00
+Type: NTAG215
+ok
+```
+
+Pages outside the user memory (4 to 129), such as the UID, lock bytes, capability container (page 3) and configuration, are refused unless you pass `--force`. Their bits are one-way: a lock bit cannot be cleared again. Use a spare tag when you experiment with them.
+
+A full dump takes about 180 ms (`cycles` reports it). The serial commands and the PC/SC reader share the chip: a long command such as `cycles` delays PC/SC answers while it runs.
 
 ## Source layout (`src/`)
-- `St25r3916.h/.cpp`: register/FIFO/command layer, init, transceive. Talks to a `Transport`, not to `Wire`, and returns status codes (no exceptions).
-- `Nfca.h/.cpp`: CRC_A, WUPA/anticollision/select (4- and 7-byte UIDs, field reset and retry for a stuck tag), Type 2 READ and WRITE.
-- `WireTransport.h`: Arduino `Wire` transport. On this board `Wire` is I2C1 on GP2/GP3 (Qwiic). Do not use `Wire1` (I2C0, unconnected pin): `Wire1.setSDA(2)` panics and hangs the board; recover with BOOTSEL held while plugging in.
-- `Ntag215.h/.cpp`: 135-page model, dump, page write with lock/config guard and read-back verify, NDEF read/write (identical pages are skipped).
-- `Ndef.h/.cpp`: text and URI records, TLV wrap, no heap (caller buffers).
-- `Cli.h/.cpp`: line-based serial CLI, same commands and output as `python -m nfc.cli`, plus `cycles`.
-- `CcidProto.h/.cpp`: CCID message handling (plain C++, host-tested), port of `micropython/ccid_proto.py`.
-- `NfcBackend.h/.cpp`: pseudo-APDUs (`FF CA` UID, `FF B0` read, `FF D6` write) onto the tag, port of `micropython/nfc_backend.py`.
-- `CcidDriver.h/.cpp`: USB CCID class driver (TinyUSB `usbd_app_driver_get_cb` + interface descriptor via `USB.registerInterface`). `ccidBegin()` must run from `initVariant()`: the core's `main()` runs `USB.begin()` and `Serial.begin()` before `setup()`, so a registration made in `setup()` is ignored. USB callbacks only note that a message arrived; `ccidService()` (called from `loop()`, under the core's USB lock) does the NFC work and sends the reply. Replies that are an exact multiple of 64 bytes end with a zero-length packet.
-- `main.cpp`: `initVariant()` registers CCID; `setup()` starts the chip; `loop()` runs the CLI and the CCID service (a long CLI command such as `cycles` delays CCID answers).
-Ports of `python/nfc`: keep fixes in sync by hand.
 
-## Serial CLI
-Open the USB serial port at 115200 (the board waits 3 s after boot). One command per line; every command ends with `ok` or `error: ...`.
+| File | Role |
+|---|---|
+| `St25r3916.h/.cpp` | The chip driver: registers, FIFO, direct commands, initialisation, field control, `transceive`. Talks to a `Transport`, not to `Wire`, and returns status codes instead of throwing. |
+| `Nfca.h/.cpp` | ISO 14443-A: CRC_A, WUPA, anticollision, select (4- and 7-byte UIDs), Type 2 READ and WRITE. |
+| `Ntag215.h/.cpp` | The tag's memory model: 135 pages, write guards with read-back verify, NDEF read and write. |
+| `Ndef.h/.cpp` | NDEF text and URI records and the TLV wrapper. No heap: callers provide the buffers. |
+| `WireTransport.h` | The Arduino `Wire` transport. |
+| `Cli.h/.cpp` | The serial command line. |
+| `CcidProto.h/.cpp` | CCID message handling: slot status, power on and off, transfer blocks, parameters. Plain C++ with no Arduino dependency. |
+| `NfcBackend.h/.cpp` | Maps the pseudo-APDUs above onto the tag. |
+| `CcidDriver.h/.cpp` | The USB CCID class driver for TinyUSB. |
+| `main.cpp` | Registers the CCID interface in `initVariant()`, starts the chip, and runs the serial command line and the CCID service from `loop()`. |
 
-    chip | detect | dump | read-ndef
-    write-ndef [--text "hello"] [--lang en] [--uri https://example.com]
-    write-page <page> <8 hex digits> [--force]
-    cycles [N]        # N x (select + full dump, compared with the first); default 50
-    help
+Behaviour of the chip worth knowing:
 
-Lock, config and capability pages need `--force` and are one-way (same as the Python CLI).
+- After a checked receive, the chip leaves the CRC_A bytes in its FIFO. `transceive` strips them when they match, so receive buffers need two spare bytes.
+- A tag's 4-bit write acknowledgement trips the chip's CRC and parity flags. The write path ignores those flags for that one frame.
+- A tag that is already selected ignores WUPA until the field is power-cycled. `selectCard` resets the field and retries once when WUPA gets no answer, so repeated selects work.
+
+### How the USB CCID reader works
+
+TinyUSB has no CCID class, so `CcidDriver.cpp` adds one:
+
+- It defines `usbd_app_driver_get_cb()`, which TinyUSB calls to find application class drivers. The Arduino-Pico core defines that function only when `ENABLE_PICOTOOL_USB` is set, which it is not in this build; if you turn that flag on, the two definitions clash.
+- It adds the CCID interface descriptor next to the USB serial one through `USB.registerInterface()`.
+- `ccidBegin()` must run from `initVariant()`. The core's `main()` runs `USB.begin()` and `Serial.begin()` before `setup()`, so a registration made in `setup()` is ignored: the Mac would see only the serial port.
+- USB callbacks run in the TinyUSB task, so they only record that a command arrived. `ccidService()`, called from `loop()`, does the NFC work over I2C and sends the reply under the core's USB lock. It also polls for a card every 300 ms and sends a slot-change notification when one appears or disappears.
+- A reply whose length is an exact multiple of 64 bytes ends with a zero-length packet.
 
 ## Tests
-    ./test/run.sh                                   # CCID message layer, on the Mac (needs only a C++ compiler)
-    # with the board flashed and a tag on the unit (scripts live in ../micropython):
-    uv run --with pyscard python ../micropython/pcsc_check.py
-    uv run --with pyscard python ../micropython/pcsc_ndef_roundtrip.py
-    uv run --with pyscard python ../micropython/pcsc_monitor.py 45
-    opensc-tool -s FFCA000000                       # UID through OpenSC
 
-The product string is `NFC CCID reader` (manufacturer `Experiment`); PC/SC shows `Experiment NFC CCID reader`.
-Wiring is the same as Phase B: Qwiic port for SDA/SCL/GND at 3.3V.
+On the Mac, no hardware needed:
+
+```
+./test/run.sh          # CCID message layer: builds test/test_ccid_proto.cpp with the system C++ compiler
+```
+
+With the board flashed and a tag on the unit, use the PC/SC scripts in [`../micropython`](../micropython), which work with either reader (run each as `uv run --with pyscard python <script>`):
+
+| Script | What it checks |
+|---|---|
+| `pcsc_check.py` | ATR, UID, page reads, and that a write to the capability container is refused. |
+| `pcsc_monitor.py [seconds]` | Prints card insert and remove events live; lift and replace the tag while it runs. |
+| `pcsc_ndef_roundtrip.py` | Writes a text and a URI record with `FF D6`, reads them back with `FF B0`, then restores the original records. |
+
+The serial `cycles` command is the reliability check: 50 of 50 rounds of select and full dump pass.
+
+## Limits
+
+- Type 2 tags (NTAG, Ultralight) only. Other cards are detected but not readable; DESFire needs an ISO-DEP layer that is not implemented.
+- The first PC/SC answers wait for the 3-second start-up delay.
+- Only one firmware can be on the Feather at a time. [`../micropython`](../micropython) builds the same reader in MicroPython and replaces this one on the board.
+
+## Same functionality elsewhere in this repo
+
+[`../python`](../python) is the same tag tool for the Mac, using an FT232H breakout instead of a Feather.
