@@ -81,6 +81,11 @@ const char* statusName(int status) {
     case ERR_OSC: return "oscillator did not start";
     case ERR_PARAM: return "bad parameter";
     case ERR_NO_ACK: return "no ACK";
+    case ERR_PROTECTED: return "page is protected (read-only, out of range, or one-way lock/config)";
+    case ERR_VERIFY: return "verify failed";
+    case ERR_TOO_LARGE: return "message does not fit the tag";
+    case ERR_NO_CC: return "capability container missing";
+    case ERR_NDEF: return "malformed NDEF data";
     default: return "unknown error";
   }
 }

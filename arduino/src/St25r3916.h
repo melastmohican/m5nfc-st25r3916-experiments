@@ -26,6 +26,11 @@ enum Status : int {
   ERR_OSC = -7,
   ERR_PARAM = -8,
   ERR_NO_ACK = -9,
+  ERR_PROTECTED = -10,    // page is read-only, out of range, or lock/config/CC without force
+  ERR_VERIFY = -11,       // read-back after a write differs
+  ERR_TOO_LARGE = -12,    // NDEF message does not fit the tag
+  ERR_NO_CC = -13,        // capability container missing
+  ERR_NDEF = -14,         // malformed NDEF data
 };
 
 const char* statusName(int status);

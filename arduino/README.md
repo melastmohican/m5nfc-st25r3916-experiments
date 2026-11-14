@@ -2,7 +2,7 @@
 
 Same goal as Phase B (Feather RP2350 as a CCID reader for the NFC unit), written in C++ with the Arduino-Pico core under PlatformIO.
 
-Status: chip driver and ISO14443-A card layer ported and verified (identity, init, select, page read). NDEF/NTAG layer, serial CLI and CCID not started. See `../.agents/notes/PLAN.md` for the plan.
+Status: chip driver, ISO14443-A layer, NTAG215 memory layer and NDEF ported and verified on hardware (dump, NDEF read/write, write guard). Serial CLI and CCID not started. See `../.agents/notes/PLAN.md` for the plan.
 
 ## Notes
 - TinyUSB in the Pico SDK has no mainline CCID class; add a custom class driver through the app-driver hook.
@@ -23,5 +23,7 @@ Qwiic I2C is I2C1: SDA GP2, SCL GP3.
 - `St25r3916.h/.cpp`: register/FIFO/command layer, init, transceive. Talks to a `Transport`, not to `Wire`, and returns status codes (no exceptions).
 - `Nfca.h/.cpp`: CRC_A, WUPA/anticollision/select (4- and 7-byte UIDs, field reset and retry for a stuck tag), Type 2 READ and WRITE.
 - `WireTransport.h`: Arduino `Wire` transport. On this board `Wire` is I2C1 on GP2/GP3 (Qwiic). Do not use `Wire1` (I2C0, unconnected pin): `Wire1.setSDA(2)` panics and hangs the board; recover with BOOTSEL held while plugging in.
-- `main.cpp`: prints the chip identity, then `detect` every second.
+- `Ntag215.h/.cpp`: 135-page model, dump, page write with lock/config guard and read-back verify, NDEF read/write (identical pages are skipped).
+- `Ndef.h/.cpp`: text and URI records, TLV wrap, no heap (caller buffers).
+- `main.cpp`: one-letter serial test harness (`c d D n w r g`); the full CLI is a later step.
 Ports of `python/nfc`: keep fixes in sync by hand.
