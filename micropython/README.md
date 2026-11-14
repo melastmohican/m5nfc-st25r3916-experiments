@@ -47,3 +47,11 @@ Extra checks (Mac side): `pcsc_monitor.py 45` prints live insert/remove events; 
 ## Install / recovery
     mpremote cp main.py :          # reader starts ~4 s after power-up
 To get the REPL back: during the 4 s boot window `mpremote exec ...` interrupts main.py (verified), or hold BOOTSEL for ~3 s right after plugging in (main.py then skips the reader and the REPL stays up; verified). Do not hold BOOTSEL at the moment of power-up: that enters the ROM bootloader (RP2350 drive) instead. Otherwise replug and retry.
+
+## Restoring this reader after the Arduino phase
+Phase C flashes Arduino-Pico over MicroPython on the same Feather. To get the reader back:
+1. Put the board in the bootloader (hold BOOTSEL, plug in; or double-tap reset) so the `RP2350` drive appears.
+2. Copy the Feather RP2350 UF2 from https://micropython.org/download/ADAFRUIT_FEATHER_RP2350/ onto it (tested: `ADAFRUIT_FEATHER_RP2350-20260824-v1.29.0.uf2`).
+3. `mpremote mip install usb-device`
+4. From this folder: `mpremote cp -r nfc :` then `mpremote cp main.py ccid_proto.py nfc_backend.py ccid_reader.py :`
+5. Replug; the reader starts after the 4 s boot window.
