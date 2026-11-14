@@ -4,12 +4,16 @@
 
 #include "Cli.h"
 #include "CcidDriver.h"
+#include "CcidProto.h"
+#include "NfcBackend.h"
 #include "St25r3916.h"
 #include "WireTransport.h"
 
 static nfc::WireTransport transport;
 static nfc::St25r3916 rf(transport);
 static nfc::Cli serialCli(Serial, rf);
+static nfc::NfcBackend ccidBackend(rf);
+static nfc::ccid::Slot ccidSlot(ccidBackend);
 static bool chipReady = false;
 
 // The core calls this before USB.begin() and its own Serial.begin(), i.e. before the USB
@@ -28,5 +32,7 @@ void setup() {
 }
 
 void loop() {
-  if (chipReady) serialCli.poll();
+  if (!chipReady) return;
+  serialCli.poll();
+  nfc::ccidService(ccidSlot, ccidBackend);
 }

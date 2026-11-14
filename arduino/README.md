@@ -2,7 +2,7 @@
 
 Same goal as Phase B (Feather RP2350 as a CCID reader for the NFC unit), written in C++ with the Arduino-Pico core under PlatformIO.
 
-Status: full driver ported and verified on hardware, with a serial CLI that mirrors the Python one (50/50 reliability cycles). The CCID class driver enumerates on macOS next to the USB serial (stub answers slot status only); the real reader logic is not ported yet. See `../.agents/notes/PLAN.md` for the plan.
+Status: full driver ported and verified on hardware, with a serial CLI that mirrors the Python one (50/50 reliability cycles). The CCID reader works over PC/SC next to the USB serial: UID, page read/write, locked pages refused, NDEF round trip, live card insert/remove events, reads up to 255 bytes. See `../.agents/notes/PLAN.md` for the plan.
 
 ## Notes
 - TinyUSB in the Pico SDK has no mainline CCID class; add a custom class driver through the app-driver hook.
@@ -26,8 +26,10 @@ Qwiic I2C is I2C1: SDA GP2, SCL GP3.
 - `Ntag215.h/.cpp`: 135-page model, dump, page write with lock/config guard and read-back verify, NDEF read/write (identical pages are skipped).
 - `Ndef.h/.cpp`: text and URI records, TLV wrap, no heap (caller buffers).
 - `Cli.h/.cpp`: line-based serial CLI, same commands and output as `python -m nfc.cli`, plus `cycles`.
-- `CcidDriver.h/.cpp`: USB CCID class driver (TinyUSB `usbd_app_driver_get_cb` + interface descriptor via `USB.registerInterface`). `ccidBegin()` must run from `initVariant()`: the core's `main()` runs `USB.begin()` and `Serial.begin()` before `setup()`, so a registration made in `setup()` is ignored. Currently a stub that answers slot status only.
-- `main.cpp`: `initVariant()` registers CCID; `setup()` starts the chip and the CLI on USB serial.
+- `CcidProto.h/.cpp`: CCID message handling (plain C++, host-tested), port of `micropython/ccid_proto.py`.
+- `NfcBackend.h/.cpp`: pseudo-APDUs (`FF CA` UID, `FF B0` read, `FF D6` write) onto the tag, port of `micropython/nfc_backend.py`.
+- `CcidDriver.h/.cpp`: USB CCID class driver (TinyUSB `usbd_app_driver_get_cb` + interface descriptor via `USB.registerInterface`). `ccidBegin()` must run from `initVariant()`: the core's `main()` runs `USB.begin()` and `Serial.begin()` before `setup()`, so a registration made in `setup()` is ignored. USB callbacks only note that a message arrived; `ccidService()` (called from `loop()`, under the core's USB lock) does the NFC work and sends the reply. Replies that are an exact multiple of 64 bytes end with a zero-length packet.
+- `main.cpp`: `initVariant()` registers CCID; `setup()` starts the chip; `loop()` runs the CLI and the CCID service (a long CLI command such as `cycles` delays CCID answers).
 Ports of `python/nfc`: keep fixes in sync by hand.
 
 ## Serial CLI
@@ -40,3 +42,14 @@ Open the USB serial port at 115200 (the board waits 3 s after boot). One command
     help
 
 Lock, config and capability pages need `--force` and are one-way (same as the Python CLI).
+
+## Tests
+    ./test/run.sh                                   # CCID message layer, on the Mac (needs only a C++ compiler)
+    # with the board flashed and a tag on the unit (scripts live in ../micropython):
+    uv run --with pyscard python ../micropython/pcsc_check.py
+    uv run --with pyscard python ../micropython/pcsc_ndef_roundtrip.py
+    uv run --with pyscard python ../micropython/pcsc_monitor.py 45
+    opensc-tool -s FFCA000000                       # UID through OpenSC
+
+The product string is `NFC CCID reader` (manufacturer `Experiment`); PC/SC shows `Experiment NFC CCID reader`.
+Wiring is the same as Phase B: Qwiic port for SDA/SCL/GND at 3.3V.
