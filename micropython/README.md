@@ -2,7 +2,7 @@
 
 Feather RP2350 (STEMMA QT) -> M5Stack NFC Unit. The Feather presents itself to the Mac as a CCID smart-card reader, so PC/SC tools work with no custom Mac software.
 
-Status: gate test passed; driver ported and verified on the Feather (chip ID, detect, NDEF read, page reads). CCID bulk messages not started. See `../.agents/notes/PLAN.md` for the plan.
+Status: gate test passed; driver ported and verified on the Feather (chip ID, detect, NDEF read, page reads). CCID reader works end to end over PC/SC (UID, page read, page write verified from the Mac via pyscard). Not yet installed as main.py. See `../.agents/notes/PLAN.md` for the plan.
 
 ## Gate test (passed)
 Board: Feather RP2350, MicroPython v1.29.0 (`ADAFRUIT_FEATHER_RP2350` UF2), plus `mpremote mip install usb-device`.
@@ -29,3 +29,15 @@ Qwiic/STEMMA QT for SDA/SCL/GND (3.3V). The NFC unit's 5V comes from the Feather
     mpremote run nfc_check.py     # chip ID, UID, NDEF, first pages
 
 The unit works from Qwiic's 3.3V on its 5V pin. Read range at 3.3V is untested beyond a tag laid on the unit.
+
+## CCID reader (working, run from RAM)
+Files: `ccid_proto.py` (CCID messages, host-testable), `nfc_backend.py` (pseudo-APDUs -> tag), `ccid_reader.py` (USB glue + main loop), `main.py` (boot window), `run_reader.py` (start now, no main.py).
+
+    uv run --with pytest python -m pytest tests -q       # protocol layer, on the Mac
+    mpremote cp ccid_proto.py nfc_backend.py ccid_reader.py run_reader.py :
+    mpremote exec "import run_reader"                   # REPL port disappears; mpremote then errors, that is expected
+    uv run --with pyscard python pcsc_check.py          # UID, reads, write guard over PC/SC
+
+The reader turns the USB serial REPL off. Unplug and replug the Feather to get the REPL back (nothing runs at boot until `main.py` is installed).
+Pseudo-APDUs: `FF CA 00 00 00` UID, `FF B0 00 <page> <Le>` read, `FF D6 00 <page> 04 <data>` write; lock/config pages answer 69 82.
+`main.py` starts the reader at boot after a 4 s window; hold BOOTSEL in that window to keep the REPL.
