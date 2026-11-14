@@ -1,38 +1,59 @@
-// I2C scan on the Qwiic bus and ST25R3916 identity read.
-// On this board variant `Wire` is I2C1 on GP2 (SDA) / GP3 (SCL), the Qwiic/STEMMA QT port,
-// already the default. `Wire1` is I2C0 on an unconnected pin: do not use it
-// (Wire1.setSDA(2) panics).
+// Phase C bring-up: chip identity, then `detect` once a second.
+// Mirrors `python -m nfc.cli chip` and `detect`.
 #include <Arduino.h>
 #include <Wire.h>
 
-static const uint8_t NFC_ADDR = 0x50;
-static const uint8_t REG_IC_IDENTITY = 0x3F;
-static const uint8_t OP_READ = 0x40;
+#include "Nfca.h"
+#include "St25r3916.h"
+#include "WireTransport.h"
 
-static int readIdentity() {
-  Wire.beginTransmission(NFC_ADDR);
-  Wire.write(REG_IC_IDENTITY | OP_READ);
-  if (Wire.endTransmission(false) != 0) return -1;  // repeated start, like the Python driver
-  if (Wire.requestFrom((int)NFC_ADDR, 1) != 1) return -2;
-  return Wire.read();
+static nfc::WireTransport transport;
+static nfc::St25r3916 rf(transport);
+static bool chipReady = false;
+
+static void chip() {
+  uint8_t type = 0, rev = 0;
+  int rc = rf.identify(&type, &rev);
+  if (rc == nfc::OK)
+    Serial.printf("ST25R3916 present: type=0x%02X revision=%d\n", type, rev);
+  else
+    Serial.printf("chip: %s\n", nfc::statusName(rc));
+}
+
+static void detect() {
+  nfc::Card card;
+  int rc = nfc::selectCard(rf, card);
+  if (rc != nfc::OK) {
+    Serial.printf("detect: %s\n", nfc::statusName(rc));
+    return;
+  }
+  char uid[32];
+  nfc::uidToHex(card, uid, sizeof(uid));
+  Serial.printf("UID:  %s\n", uid);
+  Serial.printf("ATQA: %02X%02X  SAK: 0x%02X\n", card.atqa[0], card.atqa[1], card.sak);
+  uint8_t cc[16];
+  rc = nfc::t2Read(rf, 3, cc);
+  if (rc != nfc::OK) {
+    Serial.printf("read page 3: %s\n", nfc::statusName(rc));
+    return;
+  }
+  bool ntag215 = cc[0] == 0xE1 && cc[1] == 0x10 && cc[2] == 0x3E && cc[3] == 0x00;
+  Serial.printf("Type: %s (CC %02X %02X %02X %02X)\n",
+                ntag215 ? "NTAG215" : "not an NTAG215", cc[0], cc[1], cc[2], cc[3]);
 }
 
 void setup() {
   Serial.begin(115200);
   Wire.setClock(400000);
   Wire.begin();
+  delay(3000);  // time to attach a serial monitor
+  chip();
+  int rc = rf.init();
+  chipReady = rc == nfc::OK;
+  Serial.printf("init: %s\n", nfc::statusName(rc));
 }
 
 void loop() {
-  Serial.print("scan:");
-  for (uint8_t a = 0x08; a < 0x78; a++) {
-    Wire.beginTransmission(a);
-    if (Wire.endTransmission() == 0) Serial.printf(" 0x%02X", a);
-  }
-  int id = readIdentity();
-  if (id >= 0)
-    Serial.printf("\nidentity 0x%02X type %d revision %d\n", id, (id >> 3) & 0x1F, id & 7);
-  else
-    Serial.printf("\nidentity read failed (%d)\n", id);
-  delay(2000);
+  if (chipReady) detect();
+  delay(1000);
 }
