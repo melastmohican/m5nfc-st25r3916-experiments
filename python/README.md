@@ -15,6 +15,11 @@ Mac --USB--> FT232H --I2C--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
 
 ## Wiring
 
+![Adafruit FT232H breakout connected to the M5Stack NFC unit](../images/ft232h-nfc-unit.jpg)
+
+![The same setup with an M5Stack NFC card on the unit](../images/ft232h-nfc-unit-tag.jpg)
+
+
 | FT232H | NFC unit (Grove cable) |
 |---|---|
 | D0 | SCL (white) |

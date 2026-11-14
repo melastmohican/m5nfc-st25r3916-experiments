@@ -19,6 +19,9 @@ Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC u
 
 ## Wiring
 
+![Feather RP2350 connected to the M5Stack NFC unit with a Qwiic cable](../images/feather-nfc-unit.jpg)
+
+
 Plug the unit into the Feather's Qwiic (STEMMA QT) port. That gives SDA, SCL and GND, plus 3.3V on the unit's power pin, and the unit runs from it. The unit has an on-board regulator and pull-ups to its own 3.3V rail, so no level shifter is needed. Only a tag lying on the unit has been tested for read range.
 
 In Arduino, the Qwiic port is `Wire` (I2C1, SDA GP2, SCL GP3), already the default pins. Do not use `Wire1` on this board: it is I2C0 on an unconnected pin, and `Wire1.setSDA(2)` panics and hangs the board.

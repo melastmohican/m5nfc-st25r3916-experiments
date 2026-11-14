@@ -16,6 +16,10 @@ arduino/       Mac --USB--> Feather RP2350 --I2C--+
 tinygo/        Mac --USB--> Feather RP2350 --I2C--+
 ```
 
+| `python/`: FT232H and the unit | `micropython/`, `arduino/`, `tinygo/`: Feather RP2350 and the unit |
+|---|---|
+| <img src="images/ft232h-nfc-unit.jpg" width="300" alt="FT232H breakout connected to the NFC unit"> | <img src="images/feather-nfc-unit.jpg" width="400" alt="Feather RP2350 connected to the NFC unit"> |
+
 The three Feather variants present a standard CCID reader, so the Mac needs no custom driver: `pyscard`, OpenSC, `pcsctest` and `system_profiler` all work with them.
 
 ## What all four do

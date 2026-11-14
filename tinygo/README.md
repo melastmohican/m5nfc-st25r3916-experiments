@@ -19,6 +19,8 @@ The chip logic is ported from `../arduino/src` (itself ported from `../python`),
 
 Wiring is the same as `../arduino`: the unit goes into the Qwiic port (I2C1, SDA GP2, SCL GP3).
 
+![Feather RP2350 connected to the M5Stack NFC unit with a Qwiic cable](../images/feather-nfc-unit.jpg)
+
 ## Build and flash
 
 TinyGo 0.41 has no `feather-rp2350` target; the `pico2` target runs on the same RP2350 chip and `main.go` sets the Qwiic pins itself.

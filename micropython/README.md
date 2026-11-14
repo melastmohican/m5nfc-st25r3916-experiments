@@ -16,6 +16,9 @@ Mac --USB (CCID / PC/SC)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --1
 
 ## Wiring
 
+![Feather RP2350 connected to the M5Stack NFC unit with a Qwiic cable](../images/feather-nfc-unit.jpg)
+
+
 Plug the unit into the Feather's Qwiic (STEMMA QT) port. That gives SDA, SCL and GND, plus 3.3V on the unit's power pin. The Qwiic port is I2C1 on GP2 (SDA) and GP3 (SCL).
 
 The unit has an on-board regulator and pull-ups to its own 3.3V rail, and it runs from the Qwiic port's 3.3V. Only a tag lying on the unit has been tested for read range. If you need more range, the unit's 5V pin can instead be fed from the Feather's `USB` pin; that has not been tried.
