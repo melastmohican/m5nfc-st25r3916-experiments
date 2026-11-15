@@ -86,6 +86,24 @@ def contactless_atr():
     return b"\x3b" + body + bytes((tck,))
 
 
+def atr_from_ats(ats):
+    """PC/SC part 3 ATR for an ISO 14443-4 (ISO-DEP) card, built from its ATS (length byte first):
+    TS=3B, T0=0x80|K, TD1=0x80, TD2=0x01, the K historical bytes, TCK. None if it cannot be built."""
+    if len(ats) < 2:
+        return None
+    t0 = ats[1]
+    skip = 1 + (1 if t0 & 0x10 else 0) + (1 if t0 & 0x20 else 0) + (1 if t0 & 0x40 else 0)  # TA, TB, TC
+    end = min(ats[0], len(ats))
+    hist = bytes(ats[1 + skip:end])
+    if len(hist) > 15:
+        return None
+    atr = bytes((0x3B, 0x80 | len(hist), 0x80, 0x01)) + hist
+    tck = 0
+    for b in atr[1:]:
+        tck ^= b
+    return atr + bytes((tck,))
+
+
 def slot_change_message(present, changed):
     return bytes((NOTIFY_SLOT_CHANGE, (1 if present else 0) | (2 if changed else 0)))
 

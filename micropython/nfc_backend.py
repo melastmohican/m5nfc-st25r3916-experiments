@@ -9,12 +9,18 @@
     FF 39 00 02 00         -> READ_CNT (3 bytes), 6A81 if the tag refuses
 
 Lock/config pages are refused (Ntag215.write_page guard) with SW 6982.
+
+For an ISO-DEP card (SAK bit 6, a DESFire card for example) power-on also runs RATS and the ATR is
+built from the ATS; the card then stays activated and any APDU goes to it unchanged, except FF CA
+(UID), which the reader answers. Such a card is not probed while it is powered (a Type 2 READ would
+be sent to a card that speaks ISO 14443-4): it counts as present until a command fails.
 """
-from ccid_proto import CardAbsent, ICC_ABSENT, ICC_ACTIVE, ICC_INACTIVE, contactless_atr
+from ccid_proto import CardAbsent, ICC_ABSENT, ICC_ACTIVE, ICC_INACTIVE, atr_from_ats, contactless_atr
 from nfc.nfca import select_card, t2_read
 from nfc.ntag215 import TOTAL_PAGES, Ntag215
 from nfc.ident import GET_VERSION, READ_CNT, READ_SIG, ident
-from nfc.st25r3916 import NfcError, NfcNak, NfcRefused, NfcTimeout
+from nfc.isodep import IsoDep, RfIsoDepLink
+from nfc.st25r3916 import NfcCollision, NfcError, NfcFrameError, NfcNak, NfcProtocol, NfcRefused, NfcTimeout
 
 SW_OK = b"\x90\x00"
 SW_WRONG_LENGTH = b"\x67\x00"
@@ -28,9 +34,11 @@ SW_NOT_SUPPORTED = b"\x6a\x81"
 
 
 class NfcBackend:
-    def __init__(self, rf):
+    def __init__(self, rf, link=RfIsoDepLink):
         self.rf = rf
+        self._link = link  # builds the ISO-DEP link from the driver (replaceable in tests)
         self.card = None  # set while the slot is powered
+        self.dep = None  # set when the powered card is an ISO-DEP card, activated with RATS
 
     def _probe(self):
         """Is a card in the field? (does not keep it selected for the host)"""
@@ -41,6 +49,8 @@ class NfcBackend:
             return False
 
     def status(self):
+        if self.card is not None and self.dep is not None:
+            return ICC_ACTIVE
         if self.card is not None:
             try:
                 t2_read(self.rf, 0)
@@ -52,14 +62,34 @@ class NfcBackend:
 
     def power_on(self):
         self.rf.field_reset()
+        self.dep = None
         try:
             self.card = select_card(self.rf)
         except NfcError:
             self.card = None
             raise CardAbsent()
+        if self.card.sak & 0x20:  # ISO 14443-4 card: activate it (RATS), ATR from its ATS
+            dep = IsoDep(self._link(self.rf))
+            try:
+                dep.activate()
+            except (NfcTimeout, NfcFrameError, NfcCollision):
+                self.card = None
+                raise CardAbsent()
+            atr = atr_from_ats(dep.ats)
+            if atr is None:
+                self.card = None
+                raise NfcError("no usable ATS")
+            self.dep = dep
+            return atr
         return contactless_atr()
 
     def power_off(self):
+        if self.dep is not None:
+            try:
+                self.dep.deselect()  # best effort: the field is reset next anyway
+            except NfcError:
+                pass
+            self.dep = None
         self.card = None
         self.rf.field_reset()
 
@@ -69,6 +99,8 @@ class NfcBackend:
         if len(apdu) < 4:
             return SW_WRONG_LENGTH
         cla, ins, p1, p2 = apdu[0], apdu[1], apdu[2], apdu[3]
+        if self.dep is not None:
+            return self._transmit_isodep(apdu, cla, ins, p1)
         if cla != 0xFF:
             return SW_CLA
         try:
@@ -83,6 +115,17 @@ class NfcBackend:
             return SW_INS
         except NfcTimeout:
             self.card = None
+            raise CardAbsent()
+
+    def _transmit_isodep(self, apdu, cla, ins, p1):
+        """Any APDU goes to the card unchanged, except the PC/SC get-data for the UID."""
+        if cla == 0xFF and ins == 0xCA:
+            return self._get_data(p1, apdu)
+        try:
+            return bytes(self.dep.transceive(apdu))
+        except (NfcTimeout, NfcFrameError, NfcCollision, NfcProtocol):
+            self.card = None  # the card was lifted or the link broke
+            self.dep = None
             raise CardAbsent()
 
     def _ident(self, ins, addr):

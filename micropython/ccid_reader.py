@@ -37,7 +37,9 @@ class CcidInterface(Interface):
         self.slot = slot
         self.ep_out = self.ep_in = self.ep_int = None
         self.rx = bytearray(_EP_SIZE)
-        self.tx = bytearray(_EP_SIZE)
+        self.rx_msg = bytearray()  # a command is reassembled from 64-byte packets
+        self.tx = bytearray(cp.MAX_MESSAGE)
+        self.zlp = False  # the reply was an exact multiple of 64 bytes: a zero-length packet must follow
         self.notify = bytearray(2)
         self.pending = None
         self.notify_wanted = None  # (present, changed) still to be sent
@@ -71,10 +73,24 @@ class CcidInterface(Interface):
             pass
 
     def _on_rx(self, ep, result, n):
-        if n >= 10:
-            self.pending = bytes(self.rx[:n])
-        else:
-            self._arm_rx()
+        self.rx_msg += self.rx[:n]
+        if len(self.rx_msg) >= 10:
+            want = 10 + int.from_bytes(self.rx_msg[1:5], "little")  # the header says how long it is
+            if len(self.rx_msg) >= want or n < _EP_SIZE:
+                self.pending = bytes(self.rx_msg)
+                self.rx_msg = bytearray()
+                return
+        elif n < _EP_SIZE:
+            self.rx_msg = bytearray()  # a short fragment: drop it
+        self._arm_rx()
+
+    def _on_tx_done(self, ep, result, n):
+        if self.zlp:  # a reply of exactly 64, 128, ... bytes ends with a zero-length packet
+            self.zlp = False
+            try:
+                self.submit_xfer(self.ep_in, bytearray(0))
+            except RuntimeError as e:
+                _log("zlp: %r" % (e,))
 
     # ---- called from the main loop only ----
     def service(self):
@@ -86,10 +102,13 @@ class CcidInterface(Interface):
             except Exception as e:  # noqa: BLE001
                 _log("handle: %r" % (e,))
             if resp:
-                self.tx[: len(resp)] = resp
+                n = min(len(resp), len(self.tx))
+                self.tx[:n] = resp[:n]
+                self.zlp = n % _EP_SIZE == 0
                 try:
-                    self.submit_xfer(self.ep_in, memoryview(self.tx)[: len(resp)])
+                    self.submit_xfer(self.ep_in, memoryview(self.tx)[:n], self._on_tx_done)
                 except RuntimeError as e:
+                    self.zlp = False
                     _log("tx: %r" % (e,))
             self._arm_rx()
         if self.notify_wanted is not None and not self.xfer_pending(self.ep_int):
