@@ -37,6 +37,7 @@ enum Status : int {
   ERR_NAK_AUTH = -18,     // WRITE NAK 4h: authentication counter overflow
   ERR_NAK_EEPROM = -19,   // WRITE NAK 5h: EEPROM write error
   ERR_NAK_OTHER = -20,    // WRITE NAK with another code
+  ERR_PROTOCOL = -21,     // ISO-DEP protocol error (bad block, no ATS, frame too big for the peer)
 };
 
 const char* statusName(int status);

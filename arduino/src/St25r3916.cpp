@@ -92,6 +92,7 @@ const char* statusName(int status) {
     case ERR_NAK_AUTH: return "tag refused the write: authentication counter overflow";
     case ERR_NAK_EEPROM: return "tag refused the write: EEPROM write error";
     case ERR_NAK_OTHER: return "tag refused the write: unknown NAK code";
+    case ERR_PROTOCOL: return "ISO-DEP protocol error";
     default: return "unknown error";
   }
 }

@@ -1,5 +1,8 @@
 #include "Cli.h"
 
+#include "Desfire.h"
+#include "IsoDepRf.h"
+
 #include <stdlib.h>
 #include <string.h>
 
@@ -65,7 +68,7 @@ void Cli::poll() {
 
 void Cli::help() {
   io_.println("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |");
-  io_.println("          write-page <page> <8 hex> [--force] | ident | cycles [N] | help");
+  io_.println("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help");
 }
 
 int Cli::select(Card& card) { return selectCard(rf_, card); }
@@ -83,6 +86,7 @@ void Cli::run(char* line) {
   else if (!strcmp(cmd, "write-ndef")) rc = cmdWriteNdef(argc, argv);
   else if (!strcmp(cmd, "write-page")) rc = cmdWritePage(argc, argv);
   else if (!strcmp(cmd, "ident")) rc = cmdIdent();
+  else if (!strcmp(cmd, "desfire")) rc = cmdDesfire();
   else if (!strcmp(cmd, "cycles")) rc = cmdCycles(argc, argv);
   else if (!strcmp(cmd, "help")) { help(); rc = OK; }
   else { io_.printf("unknown command: %s\n", cmd); help(); rc = ERR_PARAM; }
@@ -105,6 +109,10 @@ int Cli::cmdDetect() {
   uidToHex(card, uid, sizeof(uid));
   io_.printf("UID:  %s\n", uid);
   io_.printf("ATQA: %02X%02X  SAK: 0x%02X\n", card.atqa[0], card.atqa[1], card.sak);
+  if (card.sak & 0x20) {  // SAK bit 6: the card speaks ISO 14443-4 and does not answer Type 2 READ
+    io_.println("Type: ISO-DEP card (ISO 14443-4); try `desfire`");
+    return OK;
+  }
   bool is215 = false;
   rc = tag_.isNtag215(&is215);
   if (rc != OK) return rc;
@@ -222,6 +230,53 @@ int Cli::cmdIdent() {
   if (rc == OK && counterValue(cnt, n, &value)) io_.printf("Counter: %lu\n", (unsigned long)value);
   else if (rc == ERR_REFUSED) io_.println("Counter: not readable (NAK)");
   else return rc == OK ? ERR_BAD_RESPONSE : rc;
+  return OK;
+}
+
+static void printHex(Stream& io, const uint8_t* b, size_t n, char sep) {
+  for (size_t i = 0; i < n; i++) {
+    if (i && sep) io.print(sep);
+    io.printf("%02X", b[i]);
+  }
+}
+
+// ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what the card reveals without keys.
+int Cli::cmdDesfire() {
+  Card card;
+  int rc = select(card);
+  if (rc != OK) return rc;
+  char uid[32];
+  uidToHex(card, uid, sizeof(uid));
+  io_.printf("UID:  %s\n", uid);
+  io_.printf("ATQA: %02X%02X  SAK: 0x%02X\n", card.atqa[0], card.atqa[1], card.sak);
+  if (!(card.sak & 0x20)) return ERR_REFUSED;  // not an ISO-DEP card
+
+  RfIsoDepLink link(rf_);
+  IsoDep dep(link);
+  rc = dep.activate();
+  if (rc != OK) return rc;
+  io_.print("ATS:  ");
+  printHex(io_, dep.ats(), dep.atsLen(), ' ');
+  io_.println();
+
+  uint8_t v[28], aids[126];
+  size_t vn = 0, an = 0;
+  uint8_t sw1 = 0, sw2 = 0, asw1 = 0, asw2 = 0;
+  rc = desfireCommand(dep, 0x60, v, sizeof(v), &vn, &sw1, &sw2);
+  if (rc == OK) rc = desfireCommand(dep, 0x6A, aids, sizeof(aids), &an, &asw1, &asw2);
+  dep.deselect();
+  if (rc != OK) return rc;
+  if (vn >= 28) {
+    unsigned long storage = (v[5] & 1) == 0 ? 1UL << (v[5] >> 1) : 0;
+    io_.printf("Version: HW %u.%u SW %u.%u vendor 0x%02X type 0x%02X storage %lu bytes\n", v[3], v[4], v[10],
+               v[11], v[0], v[1], storage);
+    io_.print("Card UID: ");
+    printHex(io_, v + 14, 7, ':');
+    io_.printf("  production week %02X year %02X\n", v[26], v[27]);
+  }
+  io_.printf("GET_VERSION status: %02X %02X\n", sw1, sw2);
+  io_.printf("GET_APPLICATION_IDS status: %02X %02X\n", asw1, asw2);
+  for (size_t i = 0; i + 3 <= an; i += 3) io_.printf("  AID %02X %02X %02X\n", aids[i], aids[i + 1], aids[i + 2]);
   return OK;
 }
 

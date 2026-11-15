@@ -30,6 +30,7 @@ class Cli {
   int cmdWriteNdef(int argc, char** argv);
   int cmdWritePage(int argc, char** argv);
   int cmdIdent();
+  int cmdDesfire();
   int cmdCycles(int argc, char** argv);
   void help();
   int select(Card& card);

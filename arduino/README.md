@@ -76,6 +76,7 @@ Open the Feather's USB serial port at 115200 baud (`pio device monitor`, or any 
 | `write-ndef [--text "T"] [--lang L] [--uri U]` | Writes a text and/or URI record, replacing the current message. Pages that already match are skipped. |
 | `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
 | `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |
+| `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. `detect` points ISO-DEP cards to it. |
 | `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. |
 | `help` | Lists the commands. |
 
@@ -97,6 +98,8 @@ A full dump takes about 180 ms (`cycles` reports it). The serial commands and th
 |---|---|
 | `St25r3916.h/.cpp` | The chip driver: registers, FIFO, direct commands, initialisation, field control, `transceive`. Talks to a `Transport`, not to `Wire`, and returns status codes instead of throwing. |
 | `Nfca.h/.cpp` | ISO 14443-A: CRC_A, WUPA, anticollision, select (4- and 7-byte UIDs), Type 2 READ and WRITE. |
+| `IsoDep.h/.cpp` | ISO 14443-4 block protocol: RATS, I-block framing, chaining, waiting-time extension, retries, deselect. Ported from embassy-rs/rnfc and tested against the ISO 14443-4 Annex B scenarios (`test/test_isodep.cpp`). No Arduino dependency. |
+| `Desfire.h` | DESFire commands wrapped as `90 INS 00 00 00`, following "additional frame" replies. |
 | `Ntag215.h/.cpp` | The tag's memory model: 135 pages, write guards with read-back verify, NDEF read and write. |
 | `Ndef.h/.cpp` | NDEF text and URI records and the TLV wrapper. No heap: callers provide the buffers. |
 | `WireTransport.h` | The Arduino `Wire` transport. |
@@ -142,7 +145,7 @@ The serial `cycles` command is the reliability check: 50 of 50 rounds of select 
 
 ## Limits
 
-- Type 2 tags (NTAG, Ultralight) only. Other cards are detected but not readable; DESFire needs an ISO-DEP layer that is not implemented.
+- Type 2 tags (NTAG, Ultralight) can be read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents) but are not passed through the PC/SC reader yet.
 - The first PC/SC answers wait for the 3-second start-up delay.
 - Only one firmware can be on the Feather at a time. [`../micropython`](../micropython) builds the same reader in MicroPython and replaces this one on the board.
 
