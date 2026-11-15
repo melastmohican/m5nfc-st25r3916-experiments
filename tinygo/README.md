@@ -3,7 +3,7 @@
 Go firmware ([TinyGo](https://tinygo.org/)) for an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). It does the same two things as [`../arduino`](../arduino), over the Feather's one USB cable:
 
 - **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader, so `pyscard`, OpenSC and `pcsctest` work with it.
-- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `cycles`).
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `cycles`).
 
 ```
 Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -51,6 +51,9 @@ Same APDUs, status words and ATR as [`../arduino`](../arduino/README.md#as-a-pcs
 | `FF CA 00 00 <Le>` | UID | UID + `90 00` |
 | `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16), up to 255 | data + `90 00` |
 | `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back | `90 00` |
+| `FF 60 00 00 00` | NTAG `GET_VERSION` | 8 bytes + `90 00` |
+| `FF 3C 00 00 00` | NTAG `READ_SIG` | 32 bytes + `90 00` |
+| `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes + `90 00`, or `6A 81` if the tag refuses |
 
 Check it with the scripts in [`../micropython`](../micropython) (`uv run --with pyscard python <script>`): `pcsc_check.py`, `pcsc_monitor.py`, `pcsc_ndef_roundtrip.py`.
 
@@ -65,6 +68,7 @@ Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds aft
 | `nfc/st25r3916.go` | Chip driver over a `Transport` interface (registers, FIFO, `Transceive`). |
 | `nfc/nfca.go` | CRC_A, WUPA, anticollision, select, Type 2 READ and WRITE. |
 | `nfc/ntag215.go` | Memory model, write guards with read-back, NDEF read and write. |
+| `nfc/ident.go` | NTAG `GET_VERSION`, `READ_SIG`, `READ_CNT`, the type names, and the NAK mapping for refused writes. |
 | `nfc/ndef.go` | NDEF text and URI records, TLV wrapper. |
 | `nfc/cli.go` | The serial command line (takes an `io.Writer`, so it runs on the host too). |
 | `nfc/backend.go` | Maps the pseudo-APDUs above onto the tag. |
@@ -82,7 +86,7 @@ TinyGo's USB stack lets a program replace the configuration descriptor and regis
 go test ./nfc ./ccid     # host: CRC_A, NDEF round trip, tokenizer, CCID message layer
 ```
 
-On hardware, with a tag on the unit (2026-11-13): `chip`, `detect`, `dump`, NDEF write and read, and `cycles 50` give 50 of 50 full dumps at about 184 ms each. Over PC/SC: ATR, UID, page reads, refused lock-page write, NDEF round trip, and insert and remove events all pass. A 255-byte read takes about 64 ms.
+On hardware, with a tag on the unit (2026-11-13): `chip`, `detect`, `dump`, NDEF write and read, and `cycles 50` give 50 of 50 full dumps at about 184 ms each. Over PC/SC: ATR, UID, page reads, refused lock-page write, NDEF round trip, and insert and remove events all pass. A 255-byte read takes about 64 ms. `ident`, the three identification APDUs and the NAK messages were added on 2026-11-14 and checked the same way (`cycles 20` 20/20 at 183 ms); a refused write was not provoked on hardware.
 
 ## Limits
 

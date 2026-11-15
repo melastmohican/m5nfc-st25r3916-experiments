@@ -73,6 +73,8 @@ func (b *Backend) Transmit(apdu []byte) ([]byte, error) {
 		resp, err = b.readBinary(apdu)
 	case 0xD6:
 		resp, err = b.updateBinary(apdu)
+	case 0x60, 0x3C, 0x39: // NTAG GET_VERSION, READ_SIG, READ_CNT: FF 60/3C 00 00 00, FF 39 00 02 00
+		resp, err = b.ident(apdu)
 	default:
 		return sw(0x6D, 0x00), nil // instruction not supported
 	}
@@ -124,6 +126,18 @@ func (b *Backend) readBinary(apdu []byte) ([]byte, error) {
 	return append(out, 0x90, 0x00), nil
 }
 
+// ident answers the identification APDUs. P2 is the address byte of READ_SIG and READ_CNT.
+func (b *Backend) ident(apdu []byte) ([]byte, error) {
+	data, err := IdentCmd(b.RF, Ident(apdu[1]), apdu[3])
+	switch err {
+	case nil:
+		return append(data, 0x90, 0x00), nil
+	case ErrRefused:
+		return sw(0x6A, 0x81), nil // not supported, or refused with a NAK
+	}
+	return nil, err // a missing tag comes back as ErrTimeout and is reported absent
+}
+
 func (b *Backend) updateBinary(apdu []byte) ([]byte, error) {
 	if len(apdu) < 9 || apdu[4] != 4 {
 		return sw(0x67, 0x00), nil
@@ -138,6 +152,8 @@ func (b *Backend) updateBinary(apdu []byte) ([]byte, error) {
 		return nil, err
 	case ErrProtected:
 		return sw(0x69, 0x82), nil
+	case ErrNakArg:
+		return sw(0x6A, 0x82), nil // the tag refused the page address
 	}
-	return sw(0x65, 0x81), nil // memory failure
+	return sw(0x65, 0x81), nil // memory failure (a failed read-back or any other NAK)
 }

@@ -129,8 +129,25 @@ func T2Write(r *ST25R3916, page byte, data [4]byte) error {
 	if err != nil {
 		return err
 	}
-	if n == 0 || resp[0]&0x0F != t2Ack {
+	if n == 0 {
 		return ErrNoAck
 	}
-	return nil
+	return NakError(resp[0] & 0x0F)
+}
+
+// NakError maps the 4-bit reply to a WRITE: 0xA is the ACK (nil), the rest are NAKs.
+func NakError(code byte) error {
+	switch code {
+	case t2Ack:
+		return nil
+	case 0x0:
+		return ErrNakArg
+	case 0x1:
+		return ErrNakCRC
+	case 0x4:
+		return ErrNakAuth
+	case 0x5:
+		return ErrNakEEPROM
+	}
+	return ErrNakOther
 }

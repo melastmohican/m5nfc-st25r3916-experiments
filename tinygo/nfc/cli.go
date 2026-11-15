@@ -21,7 +21,7 @@ type Cli struct {
 }
 
 const helpText = "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n" +
-	"          write-page <page> <8 hex> [--force] | cycles [N] | help\n"
+	"          write-page <page> <8 hex> [--force] | ident | cycles [N] | help\n"
 
 // tokenize splits on whitespace; double quotes group words.
 func tokenize(line string) []string {
@@ -71,6 +71,8 @@ func (c *Cli) Run(line string) {
 		err = c.writeNDEF(argv[1:])
 	case "write-page":
 		err = c.writePage(argv[1:])
+	case "ident":
+		err = c.ident()
 	case "cycles":
 		err = c.cycles(argv[1:])
 	case "help":
@@ -236,6 +238,36 @@ func (c *Cli) writePage(args []string) error {
 		return err
 	}
 	c.printf("page %d = %02X (verified where readable)\n", page, data)
+	return nil
+}
+
+func (c *Cli) ident() error {
+	if _, err := SelectCard(c.RF); err != nil {
+		return err
+	}
+	v, err := IdentCmd(c.RF, IdentVersion, 0)
+	if err != nil {
+		return err
+	}
+	c.printf("Version: % X\nType: %s\n", v, NtagTypeName(v))
+	sig, err := IdentCmd(c.RF, IdentSignature, 0x00)
+	if err != nil {
+		return err
+	}
+	c.printf("Signature: %X\n", sig)
+	cnt, err := IdentCmd(c.RF, IdentCounter, 0x02)
+	switch {
+	case err == ErrRefused:
+		c.printf("Counter: not readable (NAK)\n")
+	case err != nil:
+		return err
+	default:
+		n, ok := CounterValue(cnt)
+		if !ok {
+			return ErrBadResponse
+		}
+		c.printf("Counter: %d\n", n)
+	}
 	return nil
 }
 
