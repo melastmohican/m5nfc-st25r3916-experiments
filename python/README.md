@@ -88,6 +88,10 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 - `detect` identifies any ISO 14443-A card by UID, ATQA and SAK, but cannot read the content of other card types. DESFire cards (SAK `0x20`, for example an ORCA card) can be identified with `desfire` (ATS, version, application IDs; no keys, so no file contents).
 - A full 135-page dump takes about 7 seconds, because every I2C transfer goes through USB.
 
+## Diagnostics
+
+`uv run python tools/probe_nfc_b.py` checks whether a card couples to the reader and whether it answers on NFC-A or NFC-B (antenna amplitude and phase, WUPA, REQB and WUPB; the Mac speaks cues for what to put on the unit). It was written for a US passport that did not answer in any position: the reader coupled to its antenna but no chip answered on either mode. The script's docstring has the details and the limits of that result.
+
 ## How it works
 
 | File | Role |
