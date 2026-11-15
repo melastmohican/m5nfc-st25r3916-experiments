@@ -4,12 +4,17 @@
     FF B0 00 <page> <Le>    -> read Le bytes starting at <page>
     FF D6 00 <page> 04 <d>  -> write one 4-byte page
 
+    FF 60 00 00 00         -> NTAG GET_VERSION (8 bytes)
+    FF 3C 00 00 00         -> READ_SIG (32 bytes)
+    FF 39 00 02 00         -> READ_CNT (3 bytes), 6A81 if the tag refuses
+
 Lock/config pages are refused (Ntag215.write_page guard) with SW 6982.
 """
 from ccid_proto import CardAbsent, ICC_ABSENT, ICC_ACTIVE, ICC_INACTIVE, contactless_atr
 from nfc.nfca import select_card, t2_read
 from nfc.ntag215 import TOTAL_PAGES, Ntag215
-from nfc.st25r3916 import NfcError, NfcTimeout
+from nfc.ident import GET_VERSION, READ_CNT, READ_SIG, ident
+from nfc.st25r3916 import NfcError, NfcNak, NfcRefused, NfcTimeout
 
 SW_OK = b"\x90\x00"
 SW_WRONG_LENGTH = b"\x67\x00"
@@ -19,6 +24,7 @@ SW_BAD_P1P2 = b"\x6b\x00"
 SW_INS = b"\x6d\x00"
 SW_CLA = b"\x6e\x00"
 SW_NOT_FOUND = b"\x6a\x82"
+SW_NOT_SUPPORTED = b"\x6a\x81"
 
 
 class NfcBackend:
@@ -72,10 +78,19 @@ class NfcBackend:
                 return self._read_binary(p2, apdu)
             if ins == 0xD6:
                 return self._update_binary(p2, apdu)
+            if ins in (GET_VERSION, READ_SIG, READ_CNT):  # FF 60/3C 00 00 00, FF 39 00 02 00
+                return self._ident(ins, p2)
             return SW_INS
         except NfcTimeout:
             self.card = None
             raise CardAbsent()
+
+    def _ident(self, ins, addr):
+        """NTAG GET_VERSION, READ_SIG, READ_CNT; P2 is the address byte of READ_SIG and READ_CNT."""
+        try:
+            return ident(self.rf, ins, addr) + SW_OK
+        except NfcRefused:
+            return SW_NOT_SUPPORTED  # not supported, or refused with a NAK
 
     def _get_data(self, p1, apdu):
         if p1 != 0x00:
@@ -104,6 +119,8 @@ class NfcBackend:
             Ntag215(self.rf).write_page(page, bytes(apdu[5:9]))
         except NfcTimeout:
             raise
+        except NfcNak as e:
+            return SW_NOT_FOUND if e.code == 0 else SW_MEMORY  # NAK 0: the tag refused the page address
         except NfcError as e:
             return SW_SECURITY if "one-way" in str(e) or "read-only" in str(e) else SW_MEMORY
         return SW_OK

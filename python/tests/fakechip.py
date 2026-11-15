@@ -6,8 +6,18 @@ from nfc.nfca import bcc
 UID = bytes([0x04, 0xA1, 0xB2, 0xC3, 0xD4, 0xE5, 0xF6])
 
 
+class Nak:
+    """A 4-bit NAK reply from the card."""
+
+    def __init__(self, code: int) -> None:
+        self.code = code
+
+
 class FakeNtag215:
     def __init__(self) -> None:
+        self.ident = True  # answers GET_VERSION, READ_SIG, READ_CNT (False: silent, like a tag without them)
+        self.counter_nak = True  # READ_CNT is refused with a NAK, as the NTAG215 on the bench does
+        self.write_nak = None  # a NAK code to answer every WRITE with
         self.pages = [bytes(4) for _ in range(135)]
         self.pages[0] = bytes([UID[0], UID[1], UID[2], bcc(bytes([0x88]) + UID[:3])])
         self.pages[1] = UID[3:7]
@@ -33,9 +43,18 @@ class FakeNtag215:
             return b"".join(self.pages[(page + i) % 135] if (page + i) < 135 else bytes(4)
                             for i in range(4))
         if frame[0] == 0xA2:
+            if self.write_nak is not None:
+                return Nak(self.write_nak)
             self.pages[frame[1]] = frame[2:6]
             self.writes.append(frame[1])
             return b"\x0a"
+        if self.ident:
+            if frame == b"\x60":
+                return bytes([0x00, 0x04, 0x04, 0x02, 0x01, 0x00, 0x11, 0x03])
+            if frame[0] == 0x3C:
+                return bytes(range(0xA0, 0xC0))
+            if frame[0] == 0x39:
+                return Nak(0x0) if self.counter_nak else bytes([0x05, 0x00, 0x00])
         return None
 
 
@@ -95,10 +114,11 @@ class FakeChip:
             if resp is None:
                 self.regs[0x1B] |= 0x40  # no-response timer expired
             else:
-                self.fifo += resp
+                four_bit = isinstance(resp, Nak) or resp == b"\x0a"
+                self.fifo += bytes([resp.code]) if isinstance(resp, Nak) else resp
                 # Like real silicon: the 4-bit WRITE ACK ends in an incomplete byte and trips the
                 # CRC and parity flags.
-                self.lb = self.ack_bits if resp == b"\x0a" else 0
+                self.lb = self.ack_bits if four_bit else 0
                 if self.lb:
                     self.regs[0x1C] |= 0xC0
                 self.regs[0x1A] |= 0x08 | 0x20 | 0x10  # TXE | RXS | RXE

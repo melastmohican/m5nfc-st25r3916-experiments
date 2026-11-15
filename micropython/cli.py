@@ -11,9 +11,10 @@ Pure Python on top of the nfc package, so it also runs on the Mac against the fa
 import time
 
 from nfc import ndef
+from nfc.ident import GET_VERSION, READ_CNT, READ_SIG, counter_value, ident, ntag_type_name
 from nfc.nfca import select_card
 from nfc.ntag215 import PAGE_SIZE, TOTAL_PAGES, Ntag215
-from nfc.st25r3916 import NfcError
+from nfc.st25r3916 import NfcError, NfcRefused
 
 try:
     _ticks, _diff = time.ticks_ms, time.ticks_diff
@@ -26,7 +27,7 @@ except AttributeError:  # CPython (host tests)
 
 HELP = (
     "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n"
-    "          write-page <page> <8 hex> [--force] | cycles [N] | help\n"
+    "          write-page <page> <8 hex> [--force] | ident | cycles [N] | help\n"
 )
 LINE_MAX = 200
 
@@ -81,7 +82,7 @@ class Cli:
                 if self._line:
                     line, self._line = self._line, ""
                     self.run(line)
-            elif len(self._line) < LINE_MAX - 1:
+            elif (c >= " " or c == "\t") and len(self._line) < LINE_MAX - 1:  # ignore control characters
                 self._line += c
 
     def run(self, line):
@@ -96,6 +97,7 @@ class Cli:
             "read-ndef": self._read_ndef,
             "write-ndef": self._write_ndef,
             "write-page": self._write_page,
+            "ident": self._ident,
             "cycles": self._cycles,
             "help": self._help,
         }.get(cmd)
@@ -188,6 +190,21 @@ class Cli:
         select_card(self.rf)
         Ntag215(self.rf).write_page(page, data, force=force)
         self.write("page %d = %s (verified where readable)\n" % (page, _hex_bytes(data, "")))
+
+    def _ident(self, args):
+        select_card(self.rf)
+        version = ident(self.rf, GET_VERSION)
+        self.write("Version: %s\n" % _hex_bytes(version))
+        self.write("Type: %s\n" % ntag_type_name(version))
+        self.write("Signature: %s\n" % _hex_bytes(ident(self.rf, READ_SIG, 0x00), ""))
+        try:
+            count = counter_value(ident(self.rf, READ_CNT, 0x02))
+        except NfcRefused:
+            self.write("Counter: not readable (NAK)\n")
+        else:
+            if count is None:
+                raise NfcError("bad response")
+            self.write("Counter: %d\n" % count)
 
     def _cycles(self, args):
         try:

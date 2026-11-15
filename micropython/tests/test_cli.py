@@ -103,3 +103,9 @@ def test_unknown_command_and_feed():
     assert out == []
     cli.feed("p\r\n")
     assert "ST25R3916 present" in "".join(out)
+
+
+def test_control_characters_are_ignored():
+    cli, out, _ = make()
+    cli.feed("\x03\x01chip\x00\r\n")  # what a terminal or a probe can send before a command
+    assert "ST25R3916 present" in "".join(out)

@@ -98,6 +98,18 @@ class NfcCollision(NfcError):
     pass
 
 
+class NfcNak(NfcError):
+    """The tag refused a WRITE with a 4-bit NAK (NTAG21x datasheet 9.3, Table 23)."""
+
+    def __init__(self, code: int, text: str) -> None:
+        super().__init__(text)
+        self.code = code
+
+
+class NfcRefused(NfcError):
+    """The tag did not run a read-only command (NAK, or it does not know it)."""
+
+
 class St25r3916:
     def __init__(
         self,

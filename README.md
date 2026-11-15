@@ -77,7 +77,7 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 |---|---|---|---|---|---|
 | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | yes | yes | yes | yes |
 | `cycles` | no | yes | yes | yes | yes |
-| `ident` and the `FF 60/3C/39` APDUs | no | no | yes | yes | yes |
+| `ident` and the `FF 60/3C/39` APDUs | no | yes | yes | yes | yes |
 | `desfire` | no | no | yes | yes | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
 | ISO-DEP pass-through, ATR from the ATS | n/a | no | yes | yes | yes |
@@ -97,7 +97,7 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 | Live card insert and remove events | no | yes | yes | yes | yes |
 | Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms |
 | Longest read per command | n/a | 48 bytes tested | 255 bytes | 255 bytes | 255 bytes |
-| Tests | 14, against a software fake chip | 21: the CCID message layer, and the serial CLI against a fake chip | host test for the CCID message layer; `cycles` on hardware | host tests for NDEF, CRC and the CCID message layer; `cycles` on hardware | 11 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
+| Tests | 14, against a software fake chip | 29: the CCID message layer, and the serial CLI, `ident` and the APDUs against a fake chip | host test for the CCID message layer; `cycles` on hardware | host tests for NDEF, CRC and the CCID message layer; `cycles` on hardware | 11 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
 | Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps |
 | Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit |
 
