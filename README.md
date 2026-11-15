@@ -1,6 +1,6 @@
 # M5Stack NFC unit (ST25R3916): read and write NTAG215 tags
 
-Five ways to read and write NTAG215 NFC tags with an [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), a small I2C module with a 13.56 MHz antenna:
+Six ways to read and write NTAG215 NFC tags with an [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), a small I2C module with a 13.56 MHz antenna:
 
 | Folder | Setup | You use it as |
 |---|---|---|
@@ -9,6 +9,7 @@ Five ways to read and write NTAG215 NFC tags with an [M5Stack NFC Universal Unit
 | [`arduino/`](arduino) | Feather RP2350 running Arduino-Pico firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 | [`tinygo/`](tinygo) | Feather RP2350 running TinyGo (Go) firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 | [`rust/`](rust) | Feather RP2350 running Rust (Embassy) firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
+| [`zephyr/`](zephyr) | Feather RP2350 running Zephyr (C++) firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 
 ```
 python/        Mac --USB--> FT232H ----------I2C--+
@@ -16,20 +17,21 @@ micropython/   Mac --USB--> Feather RP2350 --I2C--+--> M5Stack NFC unit --13.56 
 arduino/       Mac --USB--> Feather RP2350 --I2C--+
 tinygo/        Mac --USB--> Feather RP2350 --I2C--+
 rust/          Mac --USB--> Feather RP2350 --I2C--+
+zephyr/        Mac --USB--> Feather RP2350 --I2C--+
 ```
 
-| `python/`: FT232H and the unit | `micropython/`, `arduino/`, `tinygo/`, `rust/`: Feather RP2350 and the unit |
+| `python/`: FT232H and the unit | `micropython/`, `arduino/`, `tinygo/`, `rust/`, `zephyr/`: Feather RP2350 and the unit |
 |---|---|
 | <img src="images/ft232h-nfc-unit.jpg" width="300" alt="FT232H breakout connected to the NFC unit"> | <img src="images/feather-nfc-unit.jpg" width="400" alt="Feather RP2350 connected to the NFC unit"> |
 
-The four Feather variants present a standard CCID reader, so the Mac needs no custom driver: `pyscard`, OpenSC, `pcsctest` and `system_profiler` all work with them.
+The five Feather variants present a standard CCID reader, so the Mac needs no custom driver: `pyscard`, OpenSC, `pcsctest` and `system_profiler` all work with them.
 
-## What all five do
+## What all six do
 
 - Find a tag and print its UID, ATQA and SAK, and tell whether it is an NTAG215.
 - Identify an NTAG (`ident`: version, signature, counter) and a DESFire card (`desfire`: ATS, version, application IDs; no keys).
 - Dump all 135 pages (4 bytes each).
-- Read and write NDEF text and URI records. A phone (iPhone, NFC Tools) reads the records written by `python/` and `arduino/`; the `micropython/`, `tinygo/` and `rust/` records have not been checked with a phone.
+- Read and write NDEF text and URI records. A phone (iPhone, NFC Tools) reads the records written by `python/` and `arduino/`; the `micropython/`, `tinygo/`, `rust/` and `zephyr/` records have not been checked with a phone.
 - Write single pages, and read each one back to verify it.
 - Refuse writes to the UID, lock bytes, capability container and configuration pages unless forced. Those bits are one-way, so use a spare tag if you experiment with them.
 
@@ -74,44 +76,44 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 
 ### What each folder has today
 
-| | `python/` | `micropython/` | `arduino/` | `tinygo/` | `rust/` |
-|---|---|---|---|---|---|
-| `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | yes | yes | yes | yes |
-| `cycles` | yes | yes | yes | yes | yes |
-| `ident` and the `FF 60/3C/39` APDUs | yes (`ident` only: no PC/SC side) | yes | yes | yes | yes |
-| `desfire` | yes | yes | yes | yes | yes |
-| `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
-| ISO-DEP pass-through, ATR from the ATS | n/a | yes | yes | yes | yes |
-| `FF CA` answered by the reader for ISO-DEP cards | n/a | yes | yes | yes | yes |
-| Insert and remove events | n/a | yes | yes | yes | yes (not while an ISO-DEP session is open) |
-| Same `UID` format everywhere (colons) | yes | n/a | yes | yes | yes |
+| | `python/` | `micropython/` | `arduino/` | `tinygo/` | `rust/` | `zephyr/` |
+|---|---|---|---|---|---|---|
+| `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | yes | yes | yes | yes | yes |
+| `cycles` | yes | yes | yes | yes | yes | yes |
+| `ident` and the `FF 60/3C/39` APDUs | yes (`ident` only: no PC/SC side) | yes | yes | yes | yes | yes |
+| `desfire` | yes | yes | yes | yes | yes | yes |
+| `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes | yes |
+| ISO-DEP pass-through, ATR from the ATS | n/a | yes | yes | yes | yes | yes |
+| `FF CA` answered by the reader for ISO-DEP cards | n/a | yes | yes | yes | yes | yes |
+| Insert and remove events | n/a | yes | yes | yes | yes (not while an ISO-DEP session is open) | yes |
+| Same `UID` format everywhere (colons) | yes | n/a | yes | yes | yes | yes |
 
 ## Comparison
 
-| | `python/` | `micropython/` | `arduino/` | `tinygo/` | `rust/` |
-|---|---|---|---|---|---|
-| Runs on | Mac (Python 3.10+, `uv`) | Feather RP2350, MicroPython | Feather RP2350, Arduino-Pico (C++, PlatformIO) | Feather RP2350, TinyGo (Go) | Feather RP2350, Rust (Embassy, Cargo) |
-| Talks to the unit through | FT232H via `pyftdi` | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1), driver crate `rnfc-st25r39` |
-| Extra hardware | FT232H breakout | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable |
-| Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
-| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles` | the shared pseudo-APDUs (`FF CA`, `FF B0`, `FF D6`, `FF 60/3C/39`, ISO-DEP pass-through) and the same serial commands as `python/` | the same | the same | the same |
-| Live card insert and remove events | no | yes | yes | yes | yes |
-| Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms |
-| Longest read per command | n/a | 255 bytes | 255 bytes | 255 bytes | 255 bytes |
-| Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 3 host test programs: the CCID message layer, `ident`, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 21 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 13 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
-| Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps |
-| Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit |
+| | `python/` | `micropython/` | `arduino/` | `tinygo/` | `rust/` | `zephyr/` |
+|---|---|---|---|---|---|---|
+| Runs on | Mac (Python 3.10+, `uv`) | Feather RP2350, MicroPython | Feather RP2350, Arduino-Pico (C++, PlatformIO) | Feather RP2350, TinyGo (Go) | Feather RP2350, Rust (Embassy, Cargo) | Feather RP2350, Zephyr (C++, west) |
+| Talks to the unit through | FT232H via `pyftdi` | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1), driver crate `rnfc-st25r39` | the Feather's Qwiic port (I2C1) |
+| Extra hardware | FT232H breakout | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable |
+| Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
+| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles` | the shared pseudo-APDUs (`FF CA`, `FF B0`, `FF D6`, `FF 60/3C/39`, ISO-DEP pass-through) and the same serial commands as `python/` | the same | the same | the same | the same |
+| Live card insert and remove events | no | yes | yes | yes | yes | yes |
+| Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms | about 162 ms |
+| Longest read per command | n/a | 255 bytes | 255 bytes | 255 bytes | 255 bytes | 255 bytes |
+| Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 3 host test programs: the CCID message layer, `ident`, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 21 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 13 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware | 3 host test programs (the same as `arduino/`); `cycles` on hardware |
+| Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 cycles |
+| Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit | needs a Zephyr workspace (about 7 GB), `west` and a copy to the BOOTSEL drive; the heaviest setup of the six |
 
 How to choose:
 
 - **`python/`** if you want to script tag access from the Mac and have an FT232H.
-- **`micropython/`**, **`arduino/`**, **`tinygo/`** or **`rust/`** if you want a USB reader that any PC/SC software can use. `arduino/` is faster and handles longer reads; `micropython/` is quicker to modify; `tinygo/` is the same as `arduino/` written in Go; `rust/` is the same again in Rust, and the only one that reuses a published chip driver instead of porting one.
-- Only one firmware can be on a Feather at a time. Switching between `micropython/`, `arduino/`, `tinygo/` and `rust/` means flashing the board again; each README says how.
+- **`micropython/`**, **`arduino/`**, **`tinygo/`**, **`rust/`** or **`zephyr/`** if you want a USB reader that any PC/SC software can use. `arduino/` is faster and handles longer reads; `micropython/` is quicker to modify; `tinygo/` is the same as `arduino/` written in Go; `rust/` is the same again in Rust, and the only one that reuses a published chip driver instead of porting one; `zephyr/` is the `arduino/` code on the Zephyr RTOS, with its own USB CCID class because Zephyr has none.
+- Only one firmware can be on a Feather at a time. Switching between `micropython/`, `arduino/`, `tinygo/`, `rust/` and `zephyr/` means flashing the board again; each README says how.
 
 ## Supported tags and limits
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
-- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, are identified through an ISO-DEP layer that every folder has (`desfire`), and the four Feather readers pass unauthenticated commands through to them over PC/SC; file contents need keys, which this repo does not have.
+- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, are identified through an ISO-DEP layer that every folder has (`desfire`), and the five Feather readers pass unauthenticated commands through to them over PC/SC; file contents need keys, which this repo does not have.
 - The unit is powered from the Feather's Qwiic 3.3V, or from 5V with the FT232H. Read range was tested only with a tag or card lying on the unit.
 - Passports were not readable. A US passport (issued 2020, closed and open, four positions, a 3-minute scan) gave no answer on NFC-A, and no answer on NFC-B either, although the reader's antenna measurably coupled to the passport's. No known Type B card was available to check the NFC-B probe (`python/tools/probe_nfc_b.py`), so whether the cause is too little field, a Type B chip, or this passport is open.
 
@@ -124,12 +126,13 @@ Pick a folder and follow its README: it lists the hardware, the wiring, the setu
 - [`arduino/README.md`](arduino/README.md)
 - [`tinygo/README.md`](tinygo/README.md)
 - [`rust/README.md`](rust/README.md)
+- [`zephyr/README.md`](zephyr/README.md)
 
 ## Hardware
 
 - [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916): I2C address 0x50, runs from 5V with its own 3.3V regulator and I2C pull-ups
 - [Adafruit FT232H breakout](https://shop.adafruit.com/products/2266) for `python/`
-- Adafruit Feather RP2350 (the PSRAM/HSTX model) for `micropython/`, `arduino/`, `tinygo/` and `rust/`
+- Adafruit Feather RP2350 (the PSRAM/HSTX model) for `micropython/`, `arduino/`, `tinygo/`, `rust/` and `zephyr/`
 - NTAG215 tags
 - A MIFARE DESFire card for `desfire` (an ORCA transit card was used)
 
