@@ -66,6 +66,8 @@ type ST25R3916 struct {
 	rxCRC   int8  // -1 unknown, 0 off, 1 on
 	nrt     int64 // cached no-response timer setting, -1 unknown
 	ioError bool
+	// fifoStatus2 is FIFO_STATUS2 as read by the last fifoCount(): fifo_lb is in bits 3:1.
+	fifoStatus2 byte
 }
 
 func New(t Transport) *ST25R3916 { return &ST25R3916{t: t, rxCRC: -1, nrt: -1} }
@@ -140,6 +142,7 @@ func (r *ST25R3916) loadFifo(data []byte) {
 func (r *ST25R3916) fifoCount() int {
 	var s [2]byte
 	r.ReadRegs(regFifoStatus, s[:])
+	r.fifoStatus2 = s[1]
 	return int(s[0]) | int(s[1]&0xC0)<<2
 }
 
@@ -344,7 +347,7 @@ func (r *ST25R3916) prepare(rxCRC bool, timeoutMs uint32) {
 	r.setNRT(timeoutMs)
 }
 
-func (r *ST25R3916) collect(timeoutMs uint32, ignore uint32, rx []byte) (int, error) {
+func (r *ST25R3916) collect(timeoutMs uint32, ignore uint32, rx []byte, shortRx bool) (int, error) {
 	deadline := r.t.NowMs() + timeoutMs + 50
 	var irq uint32
 	for {
@@ -370,6 +373,9 @@ func (r *ST25R3916) collect(timeoutMs uint32, ignore uint32, rx []byte) (int, er
 		return 0, ErrFrame
 	}
 	n := r.fifoCount()
+	if shortRx && (n != 1 || r.fifoStatus2>>1&0x07 == 0) {
+		return 0, ErrFrame // not a 4-bit frame
+	}
 	if n > len(rx) {
 		return 0, ErrParam
 	}
@@ -393,13 +399,14 @@ func (r *ST25R3916) collect(timeoutMs uint32, ignore uint32, rx []byte) (int, er
 func (r *ST25R3916) SendShort(cmd byte, rx []byte, timeoutMs uint32) (int, error) {
 	r.prepare(false, timeoutMs)
 	r.command(cmd, nil, 0)
-	return r.collect(timeoutMs, 0, rx)
+	return r.collect(timeoutMs, 0, rx, false)
 }
 
 // Transceive sends whole bytes and returns the number of response bytes in rx.
 // txCRC: chip appends CRC_A. rxCRC: chip checks CRC_A and it is stripped here; rx needs 2 spare
 // bytes then, because the chip leaves CRC_A in the FIFO. shortRx ignores the CRC/parity flags
-// that the 4-bit WRITE ACK trips.
+// that the 4-bit WRITE ACK trips, but accepts only a one-byte frame that ends in an incomplete
+// byte, the rule ST's RFAL applies to the T2T ACK/NAK (rfalErrorHandling).
 func (r *ST25R3916) Transceive(tx, rx []byte, txCRC, rxCRC bool, timeoutMs uint32, shortRx bool) (int, error) {
 	if len(tx) == 0 || len(tx) > 64 {
 		return 0, ErrParam
@@ -418,7 +425,7 @@ func (r *ST25R3916) Transceive(tx, rx []byte, txCRC, rxCRC bool, timeoutMs uint3
 	if shortRx {
 		ignore = irqCRC | irqPar
 	}
-	n, err := r.collect(timeoutMs, ignore, rx)
+	n, err := r.collect(timeoutMs, ignore, rx, shortRx)
 	if err != nil {
 		return 0, err
 	}

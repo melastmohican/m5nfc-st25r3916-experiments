@@ -105,7 +105,7 @@ A full dump takes about 180 ms (`cycles` reports it). The serial commands and th
 Behaviour of the chip worth knowing:
 
 - After a checked receive, the chip leaves the CRC_A bytes in its FIFO. `transceive` strips them when they match, so receive buffers need two spare bytes.
-- A tag's 4-bit write acknowledgement trips the chip's CRC and parity flags. The write path ignores those flags for that one frame.
+- A tag's 4-bit write acknowledgement trips the chip's CRC and parity flags. The write path ignores those flags for that one frame, but accepts the reply only if it is exactly one byte ending in an incomplete byte (the chip's `fifo_lb` field is non-zero). That is the rule ST's RFAL library uses; the reply format is defined in the NTAG21x datasheet, section 9.3.
 - A tag that is already selected ignores WUPA until the field is power-cycled. `selectCard` resets the field and retries once when WUPA gets no answer, so repeated selects work.
 
 ### How the USB CCID reader works

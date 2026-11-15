@@ -148,3 +148,15 @@ def test_ndef_too_big_for_tag():
     select_card(rf)
     with pytest.raises(NfcError, match="holds"):
         Ntag215(rf).write_ndef([ndef.text_record("x" * 600)])
+
+
+def test_write_ack_must_be_a_four_bit_frame():
+    """A one-byte reply that is not an incomplete byte is not accepted as an ACK (ST RFAL rule)."""
+    from nfc.nfca import t2_write
+
+    chip, rf = make()
+    select_card(rf)
+    t2_write(rf, 10, bytes(4))  # a real 4-bit ACK is accepted
+    chip.ack_bits = 0  # same byte value, but a full byte
+    with pytest.raises(NfcError):
+        t2_write(rf, 10, bytes(4))

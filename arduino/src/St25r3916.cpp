@@ -151,6 +151,7 @@ void St25r3916::loadFifo(const uint8_t* data, size_t len) {
 size_t St25r3916::fifoCount() {
   uint8_t s[2];
   readRegs(REG_FIFO_STATUS1, s, 2);
+  fifoStatus2_ = s[1];
   return s[0] | ((size_t)(s[1] & 0xC0) << 2);
 }
 
@@ -311,7 +312,7 @@ void St25r3916::prepare(bool rxCrc, uint32_t timeoutMs) {
 }
 
 int St25r3916::collect(uint32_t timeoutMs, uint32_t ignoreFlags, uint8_t* rx, size_t cap,
-                       size_t* rxLen) {
+                       size_t* rxLen, bool shortRx) {
   uint32_t deadline = t_.nowMs() + timeoutMs + 50;
   uint32_t irq = 0;
   for (;;) {
@@ -325,6 +326,7 @@ int St25r3916::collect(uint32_t timeoutMs, uint32_t ignoreFlags, uint8_t* rx, si
   if (irq & IRQ_COL) return ERR_COLLISION;
   if (irq & IRQ_ERRORS & ~ignoreFlags) return ERR_FRAME;
   size_t n = fifoCount();
+  if (shortRx && (n != 1 || ((fifoStatus2_ >> 1) & 0x07) == 0)) return ERR_FRAME;  // not a 4-bit frame
   if (n > cap) return ERR_PARAM;
   size_t got = 0;
   while (got < n) {
@@ -353,7 +355,7 @@ int St25r3916::transceive(const uint8_t* tx, size_t txLen, uint8_t* rx, size_t c
   loadFifo(tx, txLen);
   command(txCrc ? CMD_TX_WITH_CRC : CMD_TX_WITHOUT_CRC);
   // short_rx: 4-bit ACK frames trip the CRC/parity flags; ignore them.
-  int rc = collect(timeoutMs, shortRx ? (IRQ_CRC | IRQ_PAR) : 0, rx, cap, rxLen);
+  int rc = collect(timeoutMs, shortRx ? (IRQ_CRC | IRQ_PAR) : 0, rx, cap, rxLen, shortRx);
   if (rc != OK) return rc;
   if (rxCrc && *rxLen >= 3) {
     // Real silicon leaves the (already checked) CRC_A in the FIFO.

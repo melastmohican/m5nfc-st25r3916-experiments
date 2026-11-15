@@ -100,7 +100,7 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 Behaviour of the chip worth knowing:
 
 - After a checked receive, the chip leaves the CRC_A bytes in its FIFO. `transceive` strips them when they match.
-- A tag's 4-bit write acknowledgement trips the chip's CRC and parity flags. The write path ignores those flags for that one frame.
+- A tag's 4-bit write acknowledgement trips the chip's CRC and parity flags. The write path ignores those flags for that one frame, but accepts the reply only if it is exactly one byte ending in an incomplete byte (the chip's `fifo_lb` field is non-zero). That is the rule ST's RFAL library uses; the reply format is defined in the NTAG21x datasheet, section 9.3.
 - A tag that is already selected ignores WUPA until the field is power-cycled. `select_card` resets the field and retries once when WUPA gets no answer, so repeated selects work.
 - The Grove connector has no interrupt pin, so the driver polls the chip over I2C and uses the chip's own no-response timer to end waits.
 

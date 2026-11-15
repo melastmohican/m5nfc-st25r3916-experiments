@@ -67,7 +67,9 @@ class St25r3916 {
   // txCrc: chip appends CRC_A. rxCrc: chip checks CRC_A and we strip it.
   // `rx` must have 2 spare bytes when rxCrc is set: the chip leaves CRC_A in the FIFO and it is
   // only stripped after the whole frame has been read. Returns ERR_PARAM if the frame is larger.
-  // shortRx: a 4-bit frame (the WRITE ACK) trips the CRC/parity flags; ignore them.
+  // shortRx: a 4-bit frame (the WRITE ACK) trips the CRC/parity flags. They are ignored, but only a
+  // one-byte frame that ends in an incomplete byte is accepted (the rule ST's RFAL applies to the
+  // T2T ACK/NAK, see rfalErrorHandling); anything else returns ERR_FRAME.
   int transceive(const uint8_t* tx, size_t txLen, uint8_t* rx, size_t cap, size_t* rxLen,
                  bool txCrc = true, bool rxCrc = true, uint32_t timeoutMs = 10,
                  bool shortRx = false);
@@ -94,12 +96,14 @@ class St25r3916 {
   void setRxCrc(bool check);
   void setNrt(uint32_t ms);
   void prepare(bool rxCrc, uint32_t timeoutMs);
-  int collect(uint32_t timeoutMs, uint32_t ignoreFlags, uint8_t* rx, size_t cap, size_t* rxLen);
+  int collect(uint32_t timeoutMs, uint32_t ignoreFlags, uint8_t* rx, size_t cap, size_t* rxLen,
+              bool shortRx = false);
 
   Transport& t_;
   int8_t rxCrc_ = -1;   // -1 unknown, 0 off, 1 on
   int32_t nrt_ = -1;    // cached no-response timer setting
   bool ioError_ = false;
+  uint8_t fifoStatus2_ = 0;  // FIFO_STATUS2 as read by the last fifoCount(): fifo_lb in bits 3:1
 };
 
 }  // namespace nfc

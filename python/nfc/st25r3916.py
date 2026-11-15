@@ -287,7 +287,7 @@ class St25r3916:
         self._set_rx_crc(rx_crc)
         self._set_nrt(timeout_ms)
 
-    def _collect(self, timeout_ms: float, ignore: int = 0) -> bytes:
+    def _collect(self, timeout_ms: float, ignore: int = 0, short_rx: bool = False) -> bytes:
         deadline = self._now() + timeout_ms / 1000.0 + 0.05
         irq = 0
         while True:
@@ -303,7 +303,13 @@ class St25r3916:
             raise NfcCollision("collision")
         if irq & IRQ_ERRORS & ~ignore:
             raise NfcFrameError(f"receive error (irq=0x{irq:08X})")
-        return self.read_fifo(self.fifo_count())
+        s1, s2 = self.read_regs(REG_FIFO_STATUS1, 2)
+        n = s1 | ((s2 & 0xC0) << 2)
+        if short_rx and (n != 1 or (s2 >> 1) & 0x07 == 0):
+            # Only a one-byte frame ending in an incomplete byte counts as a 4-bit ACK/NAK, the
+            # rule ST's RFAL applies (rfalErrorHandling).
+            raise NfcFrameError("not a 4-bit frame")
+        return self.read_fifo(n)
 
     def send_short(self, cmd: int, timeout_ms: float = 5.0) -> bytes:
         """REQA (CMD_TX_REQA) or WUPA (CMD_TX_WUPA); returns the 2-byte ATQA."""
@@ -329,8 +335,9 @@ class St25r3916:
         self.write_reg(REG_NUM_TX2, (len(data) << 3) & 0xFF)
         self.load_fifo(data)
         self.command(CMD_TX_WITH_CRC if tx_crc else CMD_TX_WITHOUT_CRC)
-        # short_rx: 4-bit ACK frames trip the CRC/parity flags; ignore them.
-        resp = self._collect(timeout_ms, IRQ_CRC | IRQ_PAR if short_rx else 0)
+        # short_rx: the 4-bit ACK trips the CRC/parity flags. Ignore them, but accept only a
+        # one-byte frame ending in an incomplete byte (ST RFAL's rule).
+        resp = self._collect(timeout_ms, IRQ_CRC | IRQ_PAR if short_rx else 0, short_rx)
         if rx_crc and len(resp) >= 3:
             # Real silicon leaves the (already checked) CRC_A in the FIFO.
             from .nfca import crc_a

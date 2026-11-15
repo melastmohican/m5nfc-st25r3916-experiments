@@ -48,6 +48,8 @@ class FakeChip:
         self.space_b = bytearray(0x40)
         self.card = card
         self.fifo = bytearray()
+        self.ack_bits = 4  # how many bits the WRITE ACK occupies in its FIFO byte (4 = real tag)
+        self.lb = 0  # valid bits in the last FIFO byte (0 = full byte), as FIFO_STATUS2 fifo_lb
         self.log: list[tuple] = []
 
     # transport protocol
@@ -76,7 +78,7 @@ class FakeChip:
             return bytes([self.space_b[out[1] & 0x3F]])
         reg = head & 0x3F
         self.regs[0x1E] = len(self.fifo) & 0xFF
-        self.regs[0x1F] = (len(self.fifo) >> 8 & 0x03) << 6
+        self.regs[0x1F] = (len(self.fifo) >> 8 & 0x03) << 6 | self.lb << 1
         res = bytes(self.regs[reg:reg + read_len])
         if reg <= 0x1D and reg + read_len > 0x1A:  # IRQ status clears on read
             for r in range(max(reg, 0x1A), min(reg + read_len, 0x1E)):
@@ -94,4 +96,9 @@ class FakeChip:
                 self.regs[0x1B] |= 0x40  # no-response timer expired
             else:
                 self.fifo += resp
+                # Like real silicon: the 4-bit WRITE ACK ends in an incomplete byte and trips the
+                # CRC and parity flags.
+                self.lb = self.ack_bits if resp == b"\x0a" else 0
+                if self.lb:
+                    self.regs[0x1C] |= 0xC0
                 self.regs[0x1A] |= 0x08 | 0x20 | 0x10  # TXE | RXS | RXE
