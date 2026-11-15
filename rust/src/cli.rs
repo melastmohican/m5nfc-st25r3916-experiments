@@ -83,6 +83,7 @@ impl Cli {
             "read-ndef" => self.read_ndef(rf).await,
             "write-ndef" => self.write_ndef(rf, &argv[1..]).await,
             "write-page" => self.write_page(rf, &argv[1..]).await,
+            "desfire" => self.desfire(rf).await,
             "cycles" => self.cycles(rf, argv.get(1).copied()).await,
             "bootsel" => {
                 // Reboot into the RP2350 bootloader so `picotool load` works without the button.
@@ -92,7 +93,7 @@ impl Cli {
                 Ok(())
             }
             "help" => {
-                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | cycles [N] | bootsel | help\r\n")).await;
+                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | desfire | cycles [N] | bootsel | help\r\n")).await;
                 Ok(())
             }
             other => {
@@ -124,8 +125,13 @@ impl Cli {
             let _ = write!(uid, "{}{:02X}", if i > 0 { ":" } else { "" }, b);
         }
         let (atqa, sak) = (s.atqa, s.sak);
-        let cc = s.t2_read(3).await?;
         self.print(format_args!("UID:  {}\r\nATQA: {:02X}{:02X}  SAK: 0x{:02X}\r\n", uid, atqa[0], atqa[1], sak)).await;
+        if sak & 0x20 != 0 {
+            // SAK bit 6: the card speaks ISO 14443-4 and does not answer Type 2 READ.
+            self.print(format_args!("Type: ISO-DEP card (ISO 14443-4); try `desfire`\r\n")).await;
+            return Ok(());
+        }
+        let cc = s.t2_read(3).await?;
         if cc[..4] == CC_NTAG215 {
             self.print(format_args!("Type: NTAG215\r\n")).await;
         } else {
@@ -240,6 +246,42 @@ impl Cli {
             page, data[0], data[1], data[2], data[3]
         ))
         .await;
+        Ok(())
+    }
+
+    /// ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what the card reveals without keys.
+    async fn desfire(&mut self, rf: &mut Rf) -> Result<(), NfcError> {
+        let i = nfc::desfire_info(rf).await?;
+        let mut hex = |s: &mut String<96>, b: &[u8]| {
+            for (n, x) in b.iter().enumerate() {
+                let _ = write!(s, "{}{:02X}", if n > 0 { " " } else { "" }, x);
+            }
+        };
+        let mut s: String<96> = String::new();
+        hex(&mut s, &i.uid);
+        self.print(format_args!("UID:  {}\r\nATQA: {:02X}{:02X}  SAK: 0x{:02X}\r\n", s, i.atqa[0], i.atqa[1], i.sak)).await;
+        s.clear();
+        hex(&mut s, &i.ats);
+        self.print(format_args!("ATS:  {}\r\n", s)).await;
+        let v = &i.version;
+        if v.len() >= 28 {
+            let storage = if v[5] & 1 == 0 { 1u32 << (v[5] >> 1) } else { 0 };
+            self.print(format_args!(
+                "Version: HW {}.{} SW {}.{} vendor 0x{:02X} type 0x{:02X} storage {} bytes\r\n",
+                v[3], v[4], v[10], v[11], v[0], v[1], storage
+            ))
+            .await;
+            s.clear();
+            hex(&mut s, &v[14..21]);
+            self.print(format_args!("Card UID: {}  production week {:02X} year {:02X}\r\n", s, v[26], v[27])).await;
+        }
+        self.print(format_args!("GET_VERSION status: {:02X} {:02X}\r\n", i.version_sw.0, i.version_sw.1)).await;
+        self.print(format_args!("GET_APPLICATION_IDS status: {:02X} {:02X}\r\n", i.app_sw.0, i.app_sw.1)).await;
+        for a in i.app_ids.chunks(3) {
+            s.clear();
+            hex(&mut s, a);
+            self.print(format_args!("  AID {}\r\n", s)).await;
+        }
         Ok(())
     }
 

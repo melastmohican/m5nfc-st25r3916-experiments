@@ -10,6 +10,9 @@ const FSC_MAX_WITHOUT_CRC: usize = FSC_MAX - 2;
 pub struct IsoDepA<T: Iso14443aReader> {
     card: T,
 
+    /// The ATS the card answered to RATS (local patch: kept so callers can show it).
+    ats: heapless::Vec<u8, ATS_MAX_LEN>,
+
     /// Max frame size we can send to the card, including header and crc.
     /// Ex: if header is 1 byte (no CID/NAD) then max INF field size is FSC-3.
     fsc: usize,
@@ -110,11 +113,17 @@ where
 
         Ok(Self {
             card,
+            ats: heapless::Vec::from_slice(ats).unwrap_or_default(),
             fsc,
             sfgt_1fc,
             fwt_1fc,
             block_num: 0,
         })
+    }
+
+    /// The ATS bytes (length byte first) the card sent in answer to RATS.
+    pub fn ats(&self) -> &[u8] {
+        &self.ats
     }
 
     pub fn inner(&self) -> &T {

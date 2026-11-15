@@ -65,7 +65,11 @@ Check it with the scripts in [`../micropython`](../micropython) (`uv run --with 
 
 ### As a serial command line
 
-Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds after power-up. Commands are the same as [`../arduino`](../arduino/README.md#as-a-serial-command-line), plus `bootsel`; each ends with `ok` or `error: ...`. Pages outside user memory (4 to 129) are refused unless `--force`; those bits are one-way.
+Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds after power-up. Commands are the same as [`../arduino`](../arduino/README.md#as-a-serial-command-line), plus `bootsel` and `desfire`; each ends with `ok` or `error: ...`. Pages outside user memory (4 to 129) are refused unless `--force`; those bits are one-way.
+
+### Reading a DESFire card (`desfire`)
+
+`desfire` runs ISO-DEP (RATS, ATS, framing, chaining) on the Rust-only `rnfc` ISO-DEP layer and asks the card for what it reveals without keys: its ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`. Tried on an ORCA transit card (MIFARE DESFire EV1 4K): the UID, ATQA, SAK and historical byte match what NFC Tools on an iPhone shows, the version reply reports a 4096-byte DESFire EV1, and the card lists its application IDs without authentication. File contents need keys that this repo does not have, so none are read. `detect` on such a card prints its UID, ATQA and SAK and points to `desfire`.
 
 ## Source layout
 
@@ -99,7 +103,7 @@ On hardware, with a tag on the unit (2026-11-14): `chip`, `detect`, `dump`, NDEF
 
 ## Limits
 
-- Type 2 tags only; DESFire and other cards are detected but not readable.
+- Type 2 tags are read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents), but not read through PC/SC yet: the CCID reader still refuses non-`FF` APDUs.
 - The records written by this variant have not been checked with a phone.
 - No fake-chip test for the driver; it comes from `rnfc-st25r39` and is tested only on hardware.
 - Depends on git crates (`rnfc*`) pinned to one commit, and on the local patch above.

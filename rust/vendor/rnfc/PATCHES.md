@@ -1,7 +1,11 @@
-# Local patch to embassy-rs/rnfc (rev 4711debbad00b1da7862238ce5d02be7b0a7709e)
+# Local patches to embassy-rs/rnfc (rev 4711debbad00b1da7862238ce5d02be7b0a7709e)
 
 Copied from https://github.com/embassy-rs/rnfc (MIT OR Apache-2.0, see LICENSE-*).
-One change, so Type 2 WRITE works: the tag answers with a 4-bit ACK (0xA) without CRC, which
+Two changes.
+
+## 1. Type 2 WRITE
+
+So Type 2 WRITE works: the tag answers with a 4-bit ACK (0xA) without CRC, which
 the upstream low-level reader reports as a CRC/parity/length error.
 
 - `rnfc-traits`: new `Frame::StandardShortRx { timeout_1fc }`.
@@ -12,3 +16,8 @@ the upstream low-level reader reports as a CRC/parity/length error.
   (`rfalErrorHandling`, "T2T 4 bit ACK / NAK" in stm32duino/ST25R3916). Other framing errors still fail.
 
 Wired in through `[patch]` in `../../Cargo.toml`.
+
+## 2. Expose the ATS
+
+- `rnfc/src/iso_dep.rs`: `IsoDepA` keeps the ATS the card sent for RATS and returns it from the new
+  `ats()` method (it was a local variable and dropped). Used by the `desfire` command to show it.

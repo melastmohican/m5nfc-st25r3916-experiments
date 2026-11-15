@@ -235,3 +235,78 @@ impl Session<'_> {
         Ok(count)
     }
 }
+
+// ---- ISO-DEP (ISO 14443-4) and DESFire, using rnfc's tested ISO-DEP layer ------------------------
+
+use rnfc::iso_dep::{Error as DepError, IsoDepA};
+use rnfc::traits::iso_dep::Reader as DepReader;
+
+/// What a DESFire card tells anyone without keys.
+pub struct DesfireInfo {
+    pub uid: Vec<u8, UID_MAX_LEN>,
+    pub atqa: [u8; 2],
+    pub sak: u8,
+    pub ats: Vec<u8, 32>,
+    /// GET_VERSION: hardware part (7), software part (7), UID/batch/production date (14).
+    pub version: Vec<u8, 28>,
+    pub version_sw: (u8, u8),
+    /// GET_APPLICATION_IDS: 3 bytes per application, and the status the card ended with.
+    pub app_ids: Vec<u8, 126>,
+    pub app_sw: (u8, u8),
+}
+
+fn dep_err<E: LlError>(e: DepError<E>) -> NfcError {
+    match e {
+        DepError::Iso14443a(l) => from_ll(l),
+        DepError::Communication => NfcError::Timeout,
+        DepError::Protocol => NfcError::BadResponse,
+        DepError::TxFrameTooBig | DepError::RxFrameTooBig => NfcError::Param,
+    }
+}
+
+/// Runs one native DESFire command wrapped in an ISO 7816 APDU (`90 INS 00 00 00`), following
+/// "additional frame" replies (`91 AF`). Appends the data to `out` and returns SW1 SW2.
+async fn desfire_cmd<R: DepReader, const N: usize>(
+    dep: &mut R,
+    ins: u8,
+    out: &mut Vec<u8, N>,
+) -> Result<(u8, u8), NfcError>
+where
+    R::Error: core::fmt::Debug,
+{
+    let mut ins = ins;
+    let mut rx = [0u8; 128];
+    loop {
+        let n = dep.transceive(&[0x90, ins, 0x00, 0x00, 0x00], &mut rx).await.map_err(|_| NfcError::Timeout)?;
+        if n < 2 {
+            return Err(NfcError::BadResponse);
+        }
+        out.extend_from_slice(&rx[..n - 2]).map_err(|_| NfcError::TooLarge)?;
+        let sw = (rx[n - 2], rx[n - 1]);
+        if sw == (0x91, 0xAF) {
+            ins = 0xAF;
+            continue;
+        }
+        return Ok(sw);
+    }
+}
+
+pub async fn desfire_info(rf: &mut Rf) -> Result<DesfireInfo, NfcError> {
+    let mut ll = rf.start_iso14443a().await.map_err(|_| NfcError::Chip)?;
+    let mut poller = Poller::new(&mut ll);
+    let card = poller.select_any().await.map_err(|e| match e {
+        rnfc::iso14443a::Error::Lower(l) => from_ll(l),
+        rnfc::iso14443a::Error::Protocol => NfcError::BadResponse,
+    })?;
+    use rnfc::traits::iso14443a::Reader as A;
+    let (uid, atqa, sak) = (Vec::from_slice(card.uid()).unwrap(), card.atqa(), card.sak());
+    let mut dep = IsoDepA::new(card).await.map_err(dep_err)?;
+    let ats = Vec::from_slice(dep.ats()).unwrap_or_default();
+
+    let mut version: Vec<u8, 28> = Vec::new();
+    let version_sw = desfire_cmd(&mut dep, 0x60, &mut version).await?;
+    let mut app_ids: Vec<u8, 126> = Vec::new();
+    let app_sw = desfire_cmd(&mut dep, 0x6A, &mut app_ids).await?;
+    let _ = dep.deselect().await;
+    Ok(DesfireInfo { uid, atqa, sak, ats, version, version_sw, app_ids, app_sw })
+}
