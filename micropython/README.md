@@ -1,6 +1,6 @@
 # micropython: USB NFC reader (PC/SC) and serial tool on a Feather RP2350
 
-MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader and a serial command line. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`. The board's USB serial port takes the same commands as the other variants (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `cycles`).
+MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader and a serial command line. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`. The board's USB serial port takes the same commands as the other variants (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`).
 
 ```
 Mac --USB (CCID / PC/SC + serial)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -64,6 +64,7 @@ Open the board's USB serial port at 115200 baud (the reader and the console shar
 | `write-ndef [--text T] [--lang L] [--uri U]` | Writes text and/or URI records. |
 | `write-page <page> <8 hex> [--force]` | Writes one page and reads it back. |
 | `ident` | NTAG identification: `GET_VERSION`, `READ_SIG`, `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer is selected again: if it still answers the command is reported as refused. |
+| `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. |
 | `cycles [N]` | N rounds of select and full dump (a full dump takes about 260 ms here). |
 
 The commands and their output are the same as in the other variants (see the shared interface in the top-level README); error texts for refused pages come from the Python driver and read differently. The commands share the chip with the PC/SC reader: a long command such as `cycles` delays PC/SC answers, and a command that selects the card resets the RF field. The REPL is not available while the reader runs, and Ctrl-C is switched off so a stray key cannot stop the reader.
@@ -133,6 +134,6 @@ With the reader running and a tag on the unit (run each as `uv run --with pyscar
 
 ## Limits
 
-- Type 2 tags (NTAG, Ultralight) only. Other cards are detected but not readable; DESFire needs an ISO-DEP layer that is not implemented.
+- Type 2 tags (NTAG, Ultralight) can be read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents) but are not passed through the PC/SC reader yet.
 - Reads longer than 48 bytes per command are untested here. The Arduino build handles up to 255.
 - The REPL is off while the reader runs (see Boot and recovery).

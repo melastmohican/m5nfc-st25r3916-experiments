@@ -11,6 +11,7 @@ Pure Python on top of the nfc package, so it also runs on the Mac against the fa
 import time
 
 from nfc import ndef
+from nfc.isodep import IsoDep, RfIsoDepLink, desfire_command
 from nfc.ident import GET_VERSION, READ_CNT, READ_SIG, counter_value, ident, ntag_type_name
 from nfc.nfca import select_card
 from nfc.ntag215 import PAGE_SIZE, TOTAL_PAGES, Ntag215
@@ -27,7 +28,7 @@ except AttributeError:  # CPython (host tests)
 
 HELP = (
     "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n"
-    "          write-page <page> <8 hex> [--force] | ident | cycles [N] | help\n"
+    "          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help\n"
 )
 LINE_MAX = 200
 
@@ -69,9 +70,10 @@ def _parse_hex4(text):
 
 
 class Cli:
-    def __init__(self, rf, write):
+    def __init__(self, rf, write, link=RfIsoDepLink):
         self.rf = rf
         self.write = write  # write(str)
+        self._link = link  # builds the ISO-DEP link from the driver (replaceable in tests)
         self._line = ""
 
     # ---- input -------------------------------------------------------
@@ -98,6 +100,7 @@ class Cli:
             "write-ndef": self._write_ndef,
             "write-page": self._write_page,
             "ident": self._ident,
+            "desfire": self._desfire,
             "cycles": self._cycles,
             "help": self._help,
         }.get(cmd)
@@ -205,6 +208,33 @@ class Cli:
             if count is None:
                 raise NfcError("bad response")
             self.write("Counter: %d\n" % count)
+
+    def _desfire(self, args):
+        """ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what a card reveals without keys."""
+        card = select_card(self.rf)
+        self.write("UID:  %s\n" % card.uid_hex)
+        self.write("ATQA: %s  SAK: 0x%02X\n" % (_hex_bytes(card.atqa, ""), card.sak))
+        if not card.sak & 0x20:
+            raise NfcRefused("the tag refused the command or does not support it")  # not an ISO-DEP card
+        dep = IsoDep(self._link(self.rf))
+        dep.activate()
+        self.write("ATS:  %s\n" % _hex_bytes(dep.ats))
+        version, vsw1, vsw2 = desfire_command(dep, 0x60)
+        aids, asw1, asw2 = desfire_command(dep, 0x6A)
+        try:
+            dep.deselect()
+        except NfcError:
+            pass  # the card is back at idle either way, or gone
+        if len(version) >= 28:
+            storage = 1 << (version[5] >> 1) if version[5] & 1 == 0 else 0
+            self.write("Version: HW %d.%d SW %d.%d vendor 0x%02X type 0x%02X storage %d bytes\n" % (
+                version[3], version[4], version[10], version[11], version[0], version[1], storage))
+            self.write("Card UID: %s  production week %02X year %02X\n" % (
+                _hex_bytes(version[14:21], ":"), version[26], version[27]))
+        self.write("GET_VERSION status: %02X %02X\n" % (vsw1, vsw2))
+        self.write("GET_APPLICATION_IDS status: %02X %02X\n" % (asw1, asw2))
+        for i in range(0, len(aids) - 2, 3):
+            self.write("  AID %s\n" % _hex_bytes(aids[i:i + 3]))
 
     def _cycles(self, args):
         try:

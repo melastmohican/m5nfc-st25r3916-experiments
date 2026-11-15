@@ -106,6 +106,10 @@ class NfcNak(NfcError):
         self.code = code
 
 
+class NfcProtocol(NfcError):
+    """ISO-DEP protocol error (bad block, no ATS, a frame the peer cannot take)."""
+
+
 class NfcRefused(NfcError):
     """The tag did not run a read-only command (NAK, or it does not know it)."""
 
