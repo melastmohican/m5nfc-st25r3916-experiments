@@ -56,6 +56,9 @@ uv run python -m nfc.cli <command>
 | `read-ndef` | Decodes the NDEF message: text and URI records. |
 | `write-ndef [--text T] [--lang L] [--uri U]` | Writes a text and/or URI record, replacing the current message. Pages that already match are skipped. |
 | `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
+| `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |
+| `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. `detect` points ISO-DEP cards to it. |
+| `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. A full dump takes about 7 s here, so 50 cycles take about 6 minutes. |
 
 Options before the command: `--freq` sets the I2C clock in Hz (default 100000) and `--url` sets the pyftdi device URL (default `ftdi://ftdi:232h/1`).
 
@@ -82,7 +85,7 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 ## Supported tags and limits
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
-- `detect` identifies any ISO 14443-A card by UID, ATQA and SAK, but cannot read the content of other card types. DESFire cards (SAK `0x20`, for example an ORCA card) are detected only: the ISO-DEP layer they need is not implemented.
+- `detect` identifies any ISO 14443-A card by UID, ATQA and SAK, but cannot read the content of other card types. DESFire cards (SAK `0x20`, for example an ORCA card) can be identified with `desfire` (ATS, version, application IDs; no keys, so no file contents).
 - A full 135-page dump takes about 7 seconds, because every I2C transfer goes through USB.
 
 ## How it works
@@ -92,6 +95,8 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 | `nfc/transport.py` | `FtdiTransport`: I2C writes and write-then-read exchanges through pyftdi. |
 | `nfc/st25r3916.py` | The chip driver: registers, FIFO, direct commands, initialisation, field control, `transceive`. |
 | `nfc/nfca.py` | ISO 14443-A: CRC_A, WUPA, anticollision, select, Type 2 READ and WRITE. |
+| `nfc/ident.py` | NTAG `GET_VERSION`, `READ_SIG`, `READ_CNT`, the type names and the counter. |
+| `nfc/isodep.py` | ISO 14443-4 block protocol: RATS, I-block framing, chaining, waiting-time extension, retries, deselect, plus the DESFire command wrapper. Ported from the C++ layer (itself a port of embassy-rs/rnfc); the same code runs in `../micropython`. |
 | `nfc/ntag215.py` | The tag's memory model: 135 pages, write guards, NDEF read and write. |
 | `nfc/ndef.py` | NDEF text and URI records and the TLV wrapper. |
 | `nfc/cli.py` | The commands above. |
@@ -110,8 +115,10 @@ Behaviour of the chip worth knowing:
 uv run --with pytest python -m pytest -q
 ```
 
-13 tests run the whole stack against a software fake chip (`tests/fakechip.py`) and need no hardware.
+39 tests run the stack against a software fake chip (`tests/fakechip.py`) or a scripted card and need no hardware: the whole read and write path, `ident` with its NAK cases, the `cycles`, `detect` and `desfire` commands, and the ISO-DEP framing (every ISO 14443-4 Annex B scenario).
+
+On hardware (2026-11-14, NTAG215 and an ORCA DESFire card on the FT232H): `ident`, NDEF write and read, page writes and the refused-page guard, `cycles 50` (50 of 50 dumps at about 7.1 s each) and `desfire` all pass, with the same output as the Feather variants.
 
 ## Same functionality elsewhere in this repo
 
-[`../micropython`](../micropython) and [`../arduino`](../arduino) turn a Feather RP2350 and the same NFC unit into a USB smart-card reader that any PC/SC tool on the Mac can use.
+[`../micropython`](../micropython), [`../arduino`](../arduino), [`../tinygo`](../tinygo) and [`../rust`](../rust) turn a Feather RP2350 and the same NFC unit into a USB smart-card reader that any PC/SC tool on the Mac can use, with the same commands as this tool on the board's serial port.

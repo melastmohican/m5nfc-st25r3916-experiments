@@ -61,7 +61,7 @@ REG_IC_IDENTITY = 0x3F
 OP_CTRL_EN = 0x80
 OP_CTRL_TX_EN = 0x08
 OP_CTRL_RX_EN = 0x40
-AUX_NO_CRC_RX = 0x80  # no_crc_rx bit in AUX (0x0A); position unverified. transceive() strips CRC_A itself.
+AUX_NO_CRC_RX = 0x80  # AUX (0x0A) bit 7, no_crc_rx (ST RFAL st25r3916_com.h: ST25R3916_REG_AUX_no_crc_rx = 1U<<7). transceive() strips CRC_A itself.
 AUX_DISPLAY_OSC_OK = 0x10
 
 # IRQ bits, combined as main | timer<<8 | error<<16 | target<<24
@@ -95,6 +95,22 @@ class NfcFrameError(NfcError):
 
 class NfcCollision(NfcError):
     pass
+
+
+class NfcNak(NfcError):
+    """The tag refused a WRITE with a 4-bit NAK (NTAG21x datasheet 9.3, Table 23)."""
+
+    def __init__(self, code: int, text: str) -> None:
+        super().__init__(text)
+        self.code = code
+
+
+class NfcProtocol(NfcError):
+    """ISO-DEP protocol error (bad block, no ATS, a frame the peer cannot take)."""
+
+
+class NfcRefused(NfcError):
+    """The tag did not run a read-only command (NAK, or it does not know it)."""
 
 
 class Transport(Protocol):

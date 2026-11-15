@@ -4,7 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Protocol
 
-from .st25r3916 import CMD_TX_WUPA, NfcError, NfcTimeout
+from .st25r3916 import CMD_TX_WUPA, NfcError, NfcNak, NfcTimeout
 
 CT = 0x88  # cascade tag
 T2_READ = 0x30
@@ -97,11 +97,27 @@ def t2_read(rf: Reader, page: int) -> bytes:
     return resp
 
 
+NAK_TEXT = {
+    0x0: "tag refused the write: invalid argument (bad page address)",
+    0x1: "tag refused the write: parity or CRC error in the command",
+    0x4: "tag refused the write: authentication counter overflow",
+    0x5: "tag refused the write: EEPROM write error",
+}
+
+
+def nak_text(code: int) -> str:
+    """Meaning of the 4-bit NAK a tag sends after a refused WRITE (NTAG21x datasheet Table 23)."""
+    return NAK_TEXT.get(code, "tag refused the write: unknown NAK code")
+
+
 def t2_write(rf: Reader, page: int, data: bytes) -> None:
     if len(data) != 4:
         raise ValueError("a page is 4 bytes")
     # The ACK is a 4-bit frame without CRC, so receive-side CRC checking is off.
     resp = rf.transceive(bytes([T2_WRITE, page]) + data, tx_crc=True, rx_crc=False,
                          short_rx=True)
-    if not resp or resp[0] & 0x0F != T2_ACK:
-        raise NfcError(f"WRITE page {page}: no ACK (got {resp.hex() or 'nothing'})")
+    if not resp:
+        raise NfcError(f"WRITE page {page}: no ACK (got nothing)")
+    code = resp[0] & 0x0F
+    if code != T2_ACK:
+        raise NfcNak(code, nak_text(code))
