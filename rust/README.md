@@ -60,6 +60,9 @@ Same APDUs, status words and ATR as [`../arduino`](../arduino/README.md#as-a-pcs
 | `FF CA 00 00 <Le>` | UID | UID + `90 00` |
 | `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16), up to 255 | data + `90 00` |
 | `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back | `90 00` |
+| `FF 60 00 00 00` | NTAG `GET_VERSION` | 8 bytes + `90 00` |
+| `FF 3C 00 00 00` | NTAG `READ_SIG` | 32 bytes + `90 00` |
+| `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes + `90 00`, or `6A 81` if the tag refuses |
 
 **ISO-DEP cards (DESFire).** If the card's SAK says it speaks ISO 14443-4, power-on also runs RATS and answers with an ATR built from the card's ATS (for a DESFire EV1: `3B 81 80 01 80 80`). Any APDU is then passed to the card, so DESFire native commands wrapped as `90 INS 00 00 00` work, including the "additional frame" chain across separate commands:
 
@@ -73,7 +76,11 @@ Check it with the scripts in [`../micropython`](../micropython) (`uv run --with 
 
 ### As a serial command line
 
-Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds after power-up. Commands are the same as [`../arduino`](../arduino/README.md#as-a-serial-command-line), plus `bootsel` and `desfire`; each ends with `ok` or `error: ...`. Pages outside user memory (4 to 129) are refused unless `--force`; those bits are one-way.
+Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds after power-up. Commands are the same as [`../arduino`](../arduino/README.md#as-a-serial-command-line), plus `ident`, `desfire` and `bootsel`; each ends with `ok` or `error: ...`. Pages outside user memory (4 to 129) are refused unless `--force`; those bits are one-way.
+
+### Identifying an NTAG (`ident`)
+
+`ident` sends `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8 and 10.6), each in its own field-on session so that a NAK from one does not disturb the next. It prints the version bytes, the type, the signature and the counter (`not readable (NAK)` when the tag refuses). A tag that stays silent after a command is selected again: if it still answers, the command is reported as refused (`6A 81` over PC/SC), otherwise the tag is absent. The same commands are the `FF 60`, `FF 3C` and `FF 39` APDUs above. The signature is shown as the tag sends it; checking it against NXP's public key is not done.
 
 ### Reading a DESFire card (`desfire`)
 

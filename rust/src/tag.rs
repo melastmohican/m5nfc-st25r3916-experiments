@@ -26,6 +26,26 @@ pub fn nack_text(code: u8) -> &'static str {
     }
 }
 
+/// NTAG family name from a `GET_VERSION` reply (NTAG21x datasheet, Table 28).
+pub fn ntag_type(version: &[u8]) -> &'static str {
+    match version {
+        [_, 0x04, 0x04, _, _, _, 0x0F, _] => "NTAG213 (NXP)",
+        [_, 0x04, 0x04, _, _, _, 0x11, _] => "NTAG215 (NXP)",
+        [_, 0x04, 0x04, _, _, _, 0x13, _] => "NTAG216 (NXP)",
+        [_, 0x04, 0x04, ..] => "NTAG, unknown size (NXP)",
+        [_, 0x04, ..] => "NXP, not an NTAG",
+        _ => "unknown",
+    }
+}
+
+/// `READ_CNT` returns the 24-bit counter low byte first.
+pub fn counter_value(b: &[u8]) -> Option<u32> {
+    match b {
+        [a, b, c] => Some(*a as u32 | (*b as u32) << 8 | (*c as u32) << 16),
+        _ => None,
+    }
+}
+
 /// Lock/config/CC pages (outside 4..=129) need `force`, and their bits are one-way. UID pages
 /// 0-1 and out-of-range pages are never writable.
 pub fn may_write(page: u8, force: bool) -> bool {
@@ -44,6 +64,18 @@ pub fn verifiable(page: u8) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ntag_names_and_counter() {
+        assert_eq!(ntag_type(&[0, 4, 4, 2, 1, 0, 0x11, 3]), "NTAG215 (NXP)");
+        assert_eq!(ntag_type(&[0, 4, 4, 2, 1, 0, 0x0F, 3]), "NTAG213 (NXP)");
+        assert_eq!(ntag_type(&[0, 4, 4, 2, 1, 0, 0x13, 3]), "NTAG216 (NXP)");
+        assert_eq!(ntag_type(&[0, 4, 4, 2, 1, 0, 0x55, 3]), "NTAG, unknown size (NXP)");
+        assert_eq!(ntag_type(&[0, 4, 1, 1, 1, 0, 0x18, 5]), "NXP, not an NTAG");
+        assert_eq!(ntag_type(&[1, 2]), "unknown");
+        assert_eq!(counter_value(&[0x01, 0x02, 0x03]), Some(0x030201));
+        assert_eq!(counter_value(&[1, 2]), None);
+    }
 
     #[test]
     fn nack_codes() {

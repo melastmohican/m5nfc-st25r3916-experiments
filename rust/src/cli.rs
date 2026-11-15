@@ -83,6 +83,7 @@ impl Cli {
             "read-ndef" => self.read_ndef(rf).await,
             "write-ndef" => self.write_ndef(rf, &argv[1..]).await,
             "write-page" => self.write_page(rf, &argv[1..]).await,
+            "ident" => self.ident(rf).await,
             "desfire" => self.desfire(rf).await,
             "cycles" => self.cycles(rf, argv.get(1).copied()).await,
             "bootsel" => {
@@ -93,7 +94,7 @@ impl Cli {
                 Ok(())
             }
             "help" => {
-                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | desfire | cycles [N] | bootsel | help\r\n")).await;
+                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | bootsel | help\r\n")).await;
                 Ok(())
             }
             other => {
@@ -249,6 +250,32 @@ impl Cli {
         Ok(())
     }
 
+    /// NTAG identification: GET_VERSION, READ_SIG and READ_CNT.
+    async fn ident(&mut self, rf: &mut Rf) -> Result<(), NfcError> {
+        use nfc::Ident;
+        let v = nfc::ident(rf, Ident::Version, None).await?;
+        let mut s: String<96> = String::new();
+        for (n, x) in v.iter().enumerate() {
+            let _ = write!(s, "{}{:02X}", if n > 0 { " " } else { "" }, x);
+        }
+        self.print(format_args!("Version: {}\r\nType: {}\r\n", s, m5nfc::tag::ntag_type(&v))).await;
+        let sig = nfc::ident(rf, Ident::Signature, None).await?;
+        let mut h: String<96> = String::new();
+        for x in sig.iter() {
+            let _ = write!(h, "{:02X}", x);
+        }
+        self.print(format_args!("Signature: {}\r\n", h)).await;
+        match nfc::ident(rf, Ident::Counter, None).await {
+            Ok(c) => match m5nfc::tag::counter_value(&c) {
+                Some(n) => self.print(format_args!("Counter: {}\r\n", n)).await,
+                None => return Err(NfcError::BadResponse),
+            },
+            Err(NfcError::Refused) => self.print(format_args!("Counter: not readable (NAK)\r\n")).await,
+            Err(e) => return Err(e),
+        }
+        Ok(())
+    }
+
     /// ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what the card reveals without keys.
     async fn desfire(&mut self, rf: &mut Rf) -> Result<(), NfcError> {
         let i = nfc::desfire_info(rf).await?;
@@ -257,8 +284,14 @@ impl Cli {
                 let _ = write!(s, "{}{:02X}", if n > 0 { " " } else { "" }, x);
             }
         };
-        let mut s: String<96> = String::new();
-        hex(&mut s, &i.uid);
+        let uid_str = |b: &[u8]| {
+            let mut s: String<96> = String::new();
+            for (n, x) in b.iter().enumerate() {
+                let _ = write!(s, "{}{:02X}", if n > 0 { ":" } else { "" }, x);
+            }
+            s
+        };
+        let mut s: String<96> = uid_str(&i.uid);
         self.print(format_args!("UID:  {}\r\nATQA: {:02X}{:02X}  SAK: 0x{:02X}\r\n", s, i.atqa[0], i.atqa[1], i.sak)).await;
         s.clear();
         hex(&mut s, &i.ats);
@@ -271,8 +304,7 @@ impl Cli {
                 v[3], v[4], v[10], v[11], v[0], v[1], storage
             ))
             .await;
-            s.clear();
-            hex(&mut s, &v[14..21]);
+            let s = uid_str(&v[14..21]);
             self.print(format_args!("Card UID: {}  production week {:02X} year {:02X}\r\n", s, v[26], v[27])).await;
         }
         self.print(format_args!("GET_VERSION status: {:02X} {:02X}\r\n", i.version_sw.0, i.version_sw.1)).await;

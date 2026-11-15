@@ -77,13 +77,13 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 |---|---|---|---|---|---|
 | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | no serial command line | yes | yes | yes |
 | `cycles` | no | no | yes | yes | yes |
-| `ident` and the `FF 60/3C/39` APDUs | no | no | no | no | no |
+| `ident` and the `FF 60/3C/39` APDUs | no | no | no | no | yes |
 | `desfire` | no | no | no | no | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
 | ISO-DEP pass-through, ATR from the ATS | n/a | no | no | no | yes |
-| `FF CA` answered by the reader for ISO-DEP cards | n/a | no | no | no | no (passed to the card) |
+| `FF CA` answered by the reader for ISO-DEP cards | n/a | no | no | no | yes |
 | Insert and remove events | n/a | yes | yes | yes | yes (not while an ISO-DEP session is open) |
-| Same `UID` format everywhere (colons) | yes | n/a | yes | yes | `desfire` prints spaces |
+| Same `UID` format everywhere (colons) | yes | n/a | yes | yes | yes |
 
 ## Comparison
 

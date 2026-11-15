@@ -61,6 +61,8 @@ pub enum NfcError {
     NoAck,
     /// The tag answered a WRITE with a 4-bit NAK (code in the low nibble).
     Nack(u8),
+    /// The tag did not run a read-only command (NAK, or it does not know it).
+    Refused,
     /// Page is read-only, out of range, or lock/config/CC without force.
     Protected,
     Verify,
@@ -79,6 +81,7 @@ impl NfcError {
             Self::Param => "bad parameter",
             Self::NoAck => "no ACK",
             Self::Nack(code) => tag::nack_text(code),
+            Self::Refused => "the tag refused the command or does not support it",
             Self::Protected => "page is protected (read-only, out of range, or one-way lock/config)",
             Self::Verify => "verify failed",
             Self::TooLarge => "message does not fit the tag",
@@ -309,4 +312,57 @@ pub async fn desfire_info(rf: &mut Rf) -> Result<DesfireInfo, NfcError> {
     let app_sw = desfire_cmd(&mut dep, 0x6A, &mut app_ids).await?;
     let _ = dep.deselect().await;
     Ok(DesfireInfo { uid, atqa, sak, ats, version, version_sw, app_ids, app_sw })
+}
+
+// ---- NTAG identification (NTAG21x datasheet 10.1, 10.6, 10.8) ---------------------------------
+
+/// The read-only NTAG commands. A tag that does not know one stays silent or answers with a
+/// 4-bit NAK, which the receive path reports as a receive error.
+#[derive(Clone, Copy)]
+pub enum Ident {
+    Version,
+    Signature,
+    Counter,
+}
+
+impl Ident {
+    fn bytes(self, addr: Option<u8>) -> ([u8; 2], usize, usize) {
+        match self {
+            Ident::Version => ([0x60, 0], 1, 8),
+            Ident::Signature => ([0x3C, addr.unwrap_or(0x00)], 2, 32),
+            Ident::Counter => ([0x39, addr.unwrap_or(0x02)], 2, 3),
+        }
+    }
+}
+
+impl Session<'_> {
+    async fn ident_raw(&mut self, which: Ident, addr: Option<u8>) -> Result<Vec<u8, 32>, NfcError> {
+        let (tx, len, want) = which.bytes(addr);
+        let mut rx = [0u8; 40]; // room for the CRC_A before it is stripped
+        let bits = self
+            .ll
+            .transceive(&tx[..len], &mut rx, Frame::Standard { timeout_1fc: READ_TIMEOUT_1FC })
+            .await
+            .map_err(from_ll)?;
+        if bits != want * 8 {
+            return Err(NfcError::BadResponse);
+        }
+        Ok(Vec::from_slice(&rx[..want]).unwrap())
+    }
+}
+
+/// Selects the tag and runs one identification command. If the tag does not answer, it is
+/// selected again: a tag that still answers refused the command, a missing tag is absent.
+pub async fn ident(rf: &mut Rf, which: Ident, addr: Option<u8>) -> Result<Vec<u8, 32>, NfcError> {
+    let first = {
+        let mut s = open(rf).await?;
+        s.ident_raw(which, addr).await
+    };
+    match first {
+        Err(NfcError::Timeout) | Err(NfcError::Frame) | Err(NfcError::BadResponse) => {
+            open(rf).await?; // still there?
+            Err(NfcError::Refused)
+        }
+        other => other,
+    }
 }

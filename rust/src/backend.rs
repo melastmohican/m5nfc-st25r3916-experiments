@@ -52,6 +52,18 @@ impl NfcBackend {
             self.powered = false;
             return Err(BeError::Absent);
         }
+        if apdu.len() >= 4 && apdu[0] == 0xFF && apdu[1] == 0xCA {
+            // PC/SC part 3 get-data: the reader answers with the UID, whatever the card is.
+            if apdu[2] != 0 {
+                sw(resp, 0x6B, 0x00);
+                return Ok(());
+            }
+            let le = apdu.get(4).copied().unwrap_or(0) as usize;
+            let take = if le == 0 || le > self.uid.len() { self.uid.len() } else { le };
+            let _ = resp.extend_from_slice(&self.uid[..take]);
+            sw(resp, 0x90, 0x00);
+            return Ok(());
+        }
         let Ok(cmd) = Vec::from_slice(apdu) else { return Err(BeError::Hw) };
         isodep::CMD.send(Cmd::Transmit(cmd)).await;
         match isodep::RESP.receive().await {
@@ -61,6 +73,33 @@ impl NfcBackend {
                 Err(e)
             }
             Resp::Opened(_) => Err(BeError::Hw),
+        }
+    }
+
+    /// `FF 60 00 00 00` GET_VERSION, `FF 3C 00 00 00` READ_SIG, `FF 39 00 02 00` READ_CNT. The code
+    /// after `FF` is the native command; P2 is the address byte of READ_SIG and READ_CNT.
+    async fn transmit_ident(&mut self, apdu: &[u8], resp: &mut Vec<u8, MAX_DATA>) -> Result<(), BeError> {
+        let (which, addr) = match apdu[1] {
+            0x60 => (nfc::Ident::Version, None),
+            0x3C => (nfc::Ident::Signature, Some(apdu[3])),
+            _ => (nfc::Ident::Counter, Some(apdu[3])),
+        };
+        let mut g = self.rf.lock().await;
+        match nfc::ident(&mut g, which, addr).await {
+            Ok(data) => {
+                let _ = resp.extend_from_slice(&data);
+                sw(resp, 0x90, 0x00);
+                Ok(())
+            }
+            Err(NfcError::Refused) => {
+                sw(resp, 0x6A, 0x81); // not supported, or refused with a NAK
+                Ok(())
+            }
+            Err(e) if soft_absent(e) => {
+                self.powered = false;
+                Err(BeError::Absent)
+            }
+            Err(_) => Err(BeError::Hw),
         }
     }
 
@@ -159,6 +198,9 @@ impl Backend for NfcBackend {
         if apdu[0] != 0xFF {
             sw(resp, 0x6E, 0x00); // class not supported
             return Ok(());
+        }
+        if matches!(apdu[1], 0x60 | 0x3C | 0x39) {
+            return self.transmit_ident(apdu, resp).await;
         }
         let mut g = self.rf.lock().await;
         let mut s = match nfc::open(&mut g).await {
