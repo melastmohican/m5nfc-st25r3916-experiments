@@ -68,6 +68,39 @@ func ContactlessATR() []byte {
 	return append(append([]byte{0x3B}, body...), tck)
 }
 
+// ATRFromATS is the PC/SC part 3 ATR for an ISO 14443-4 (ISO-DEP) card, built from its ATS (length
+// byte first): TS=3B, T0=0x80|K, TD1=0x80, TD2=0x01, the K historical bytes, TCK. nil if it cannot
+// be built.
+func ATRFromATS(ats []byte) []byte {
+	if len(ats) < 2 {
+		return nil
+	}
+	t0 := ats[1]
+	skip := 1
+	for _, bit := range []byte{0x10, 0x20, 0x40} { // TA(1), TB(1), TC(1)
+		if t0&bit != 0 {
+			skip++
+		}
+	}
+	end := int(ats[0])
+	if end > len(ats) {
+		end = len(ats)
+	}
+	var hist []byte
+	if end > 1+skip {
+		hist = ats[1+skip : end]
+	}
+	if len(hist) > 15 {
+		return nil
+	}
+	atr := append([]byte{0x3B, 0x80 | byte(len(hist)), 0x80, 0x01}, hist...)
+	var tck byte
+	for _, b := range atr[1:] {
+		tck ^= b
+	}
+	return append(atr, tck)
+}
+
 // SlotChangeMessage is RDR_to_PC_NotifySlotChange (2 bytes).
 func SlotChangeMessage(present, changed bool) [2]byte {
 	var b byte

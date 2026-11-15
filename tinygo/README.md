@@ -54,6 +54,13 @@ Same APDUs, status words and ATR as [`../arduino`](../arduino/README.md#as-a-pcs
 | `FF 60 00 00 00` | NTAG `GET_VERSION` | 8 bytes + `90 00` |
 | `FF 3C 00 00 00` | NTAG `READ_SIG` | 32 bytes + `90 00` |
 | `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes + `90 00`, or `6A 81` if the tag refuses |
+| anything else, card is ISO-DEP | passed to the card unchanged; the card's reply and status words come back | card's reply |
+
+For an ISO-DEP card (a DESFire card, for example) power-on also runs RATS and answers with an ATR built from the card's ATS (`3B 81 80 01 80 80` for a DESFire EV1). The card then stays activated between APDUs, so DESFire native commands wrapped as `90 INS 00 00 00` work, including the "additional frame" chain across separate commands; `FF CA` is still answered by the reader. A serial command that selects the card ends that session (the next PC/SC command fails and the host connects again), and while an ISO-DEP card is powered the reader does not probe for it, so a removed card is noticed on the next command instead of through a slot-change event. Only unauthenticated commands were tried; there is no key handling.
+
+```
+opensc-tool -s 9060000000 -s 90AF000000 -s 90AF000000    # GET_VERSION in three frames
+```
 
 Check it with the scripts in [`../micropython`](../micropython) (`uv run --with pyscard python <script>`): `pcsc_check.py`, `pcsc_monitor.py`, `pcsc_ndef_roundtrip.py`.
 
@@ -91,7 +98,7 @@ On hardware, with a tag on the unit (2026-11-13): `chip`, `detect`, `dump`, NDEF
 
 ## Limits
 
-- Type 2 tags can be read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents) but are not passed through the PC/SC reader yet.
+- Type 2 tags can be read and written. DESFire cards can be identified with `desfire` and passed through the PC/SC reader (no keys, so no file contents).
 - The reader has no product string yet, so macOS shows it as `11914 10` (USB vendor and product ID).
 - No fake-chip test for the driver (the Python variant has one), only hardware runs.
 - Serial commands and the PC/SC reader share the chip; a long `cycles` delays PC/SC answers.

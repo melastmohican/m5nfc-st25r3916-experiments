@@ -12,12 +12,18 @@ import "github.com/melastmohican/m5nfc-st25r3916-experiments/tinygo/ccid"
 type Backend struct {
 	RF      *ST25R3916
 	card    Card
-	powered bool // set while the host holds the slot powered
+	powered bool    // set while the host holds the slot powered
+	isoDep  *IsoDep // set when the powered card is an ISO-DEP card, activated with RATS
 }
 
 var _ ccid.Backend = (*Backend)(nil)
 
 func (b *Backend) Status() (int, error) {
+	// An activated ISO-DEP card cannot be probed without disturbing it (a Type 2 READ would go to a
+	// card that speaks ISO 14443-4), so it counts as present until a command fails.
+	if b.powered && b.isoDep != nil {
+		return ccid.IccActive, nil
+	}
 	if b.powered {
 		if _, err := T2Read(b.RF, 0); err == nil {
 			return ccid.IccActive, nil
@@ -34,6 +40,7 @@ func (b *Backend) Status() (int, error) {
 func (b *Backend) PowerOn() ([]byte, error) {
 	b.RF.FieldReset()
 	b.powered = false
+	b.isoDep = nil
 	card, err := SelectCard(b.RF)
 	switch err {
 	case nil:
@@ -43,11 +50,32 @@ func (b *Backend) PowerOn() ([]byte, error) {
 		return nil, err
 	}
 	b.card = card
+	if card.SAK&0x20 != 0 { // ISO 14443-4 card: activate it (RATS) and answer with an ATR built from its ATS
+		dep := NewIsoDep(RfIsoDepLink{b.RF})
+		switch err := dep.Activate(); err {
+		case nil:
+		case ErrTimeout, ErrCollision, ErrFrame:
+			return nil, ccid.ErrAbsent
+		default:
+			return nil, err
+		}
+		atr := ccid.ATRFromATS(dep.ATS())
+		if atr == nil {
+			return nil, ErrBadResponse
+		}
+		b.isoDep = dep
+		b.powered = true
+		return atr, nil
+	}
 	b.powered = true
 	return ccid.ContactlessATR(), nil
 }
 
 func (b *Backend) PowerOff() {
+	if b.isoDep != nil {
+		_ = b.isoDep.Deselect() // best effort: the field is reset next anyway
+		b.isoDep = nil
+	}
 	b.powered = false
 	b.RF.FieldReset()
 }
@@ -57,6 +85,9 @@ func sw(a, c byte) []byte { return []byte{a, c} }
 func (b *Backend) Transmit(apdu []byte) ([]byte, error) {
 	if !b.powered {
 		return nil, ccid.ErrAbsent
+	}
+	if b.isoDep != nil {
+		return b.transmitIsoDep(apdu)
 	}
 	if len(apdu) < 4 {
 		return sw(0x67, 0x00), nil
@@ -83,6 +114,24 @@ func (b *Backend) Transmit(apdu []byte) ([]byte, error) {
 		return nil, ccid.ErrAbsent
 	}
 	return resp, err
+}
+
+// transmitIsoDep sends any APDU to the card unchanged, except the PC/SC get-data for the UID, which
+// the reader answers.
+func (b *Backend) transmitIsoDep(apdu []byte) ([]byte, error) {
+	if len(apdu) >= 4 && apdu[0] == 0xFF && apdu[1] == 0xCA {
+		return b.getData(apdu)
+	}
+	resp, err := b.isoDep.Transceive(apdu)
+	switch err {
+	case nil:
+		return resp, nil
+	case ErrTimeout, ErrFrame, ErrCollision, ErrProtocol:
+		b.powered = false // the card was lifted or the link broke
+		b.isoDep = nil
+		return nil, ccid.ErrAbsent
+	}
+	return nil, err
 }
 
 func le(apdu []byte) int {

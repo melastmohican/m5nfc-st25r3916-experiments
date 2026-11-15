@@ -62,3 +62,17 @@ func TestSlot(t *testing.T) {
 		t.Fatal("short")
 	}
 }
+
+func TestATRFromATS(t *testing.T) {
+	// ATS of a DESFire EV1: TL=6, T0=75, TA, TB, TC, one historical byte 0x80
+	if got := ATRFromATS([]byte{0x06, 0x75, 0x77, 0x81, 0x02, 0x80}); !bytes.Equal(got, []byte{0x3B, 0x81, 0x80, 0x01, 0x80, 0x80}) {
+		t.Fatalf("% x", got)
+	}
+	// no TA/TB/TC and no historical bytes
+	if got := ATRFromATS([]byte{0x02, 0x00}); !bytes.Equal(got, []byte{0x3B, 0x80, 0x80, 0x01, 0x01}) {
+		t.Fatalf("% x", got)
+	}
+	if ATRFromATS([]byte{0x06}) != nil || ATRFromATS(nil) != nil {
+		t.Fatal("short ATS accepted")
+	}
+}
