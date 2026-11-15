@@ -65,7 +65,7 @@ void Cli::poll() {
 
 void Cli::help() {
   io_.println("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |");
-  io_.println("          write-page <page> <8 hex> [--force] | cycles [N] | help");
+  io_.println("          write-page <page> <8 hex> [--force] | ident | cycles [N] | help");
 }
 
 int Cli::select(Card& card) { return selectCard(rf_, card); }
@@ -82,6 +82,7 @@ void Cli::run(char* line) {
   else if (!strcmp(cmd, "read-ndef")) rc = cmdReadNdef();
   else if (!strcmp(cmd, "write-ndef")) rc = cmdWriteNdef(argc, argv);
   else if (!strcmp(cmd, "write-page")) rc = cmdWritePage(argc, argv);
+  else if (!strcmp(cmd, "ident")) rc = cmdIdent();
   else if (!strcmp(cmd, "cycles")) rc = cmdCycles(argc, argv);
   else if (!strcmp(cmd, "help")) { help(); rc = OK; }
   else { io_.printf("unknown command: %s\n", cmd); help(); rc = ERR_PARAM; }
@@ -196,6 +197,31 @@ int Cli::cmdWritePage(int argc, char** argv) {
   if (rc != OK) return rc;
   io_.printf("page %d = %02X%02X%02X%02X (verified where readable)\n", page, data[0], data[1],
              data[2], data[3]);
+  return OK;
+}
+
+int Cli::cmdIdent() {
+  Card card;
+  int rc = select(card);
+  if (rc != OK) return rc;
+  uint8_t v[8], sig[32], cnt[3];
+  size_t n = 0;
+  rc = tag_.identCmd(Ident::Version, 0, v, &n);
+  if (rc != OK) return rc;
+  io_.print("Version:");
+  for (size_t i = 0; i < n; i++) io_.printf("%s%02X", i ? " " : " ", v[i]);
+  io_.println();
+  io_.printf("Type: %s\n", ntagTypeName(v, n));
+  rc = tag_.identCmd(Ident::Signature, 0x00, sig, &n);
+  if (rc != OK) return rc;
+  io_.print("Signature: ");
+  for (size_t i = 0; i < n; i++) io_.printf("%02X", sig[i]);
+  io_.println();
+  rc = tag_.identCmd(Ident::Counter, 0x02, cnt, &n);
+  uint32_t value = 0;
+  if (rc == OK && counterValue(cnt, n, &value)) io_.printf("Counter: %lu\n", (unsigned long)value);
+  else if (rc == ERR_REFUSED) io_.println("Counter: not readable (NAK)");
+  else return rc == OK ? ERR_BAD_RESPONSE : rc;
   return OK;
 }
 

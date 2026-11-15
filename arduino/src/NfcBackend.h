@@ -23,6 +23,7 @@ class NfcBackend : public ccid::Backend {
   int transmit(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* respLen) override;
 
  private:
+  int ident(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* n);
   int getData(uint8_t p1, const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* n);
   int readBinary(uint8_t page, const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap,
                  size_t* n);

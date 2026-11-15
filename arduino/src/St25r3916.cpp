@@ -86,6 +86,12 @@ const char* statusName(int status) {
     case ERR_TOO_LARGE: return "message does not fit the tag";
     case ERR_NO_CC: return "capability container missing";
     case ERR_NDEF: return "malformed NDEF data";
+    case ERR_REFUSED: return "the tag refused the command or does not support it";
+    case ERR_NAK_ARG: return "tag refused the write: invalid argument (bad page address)";
+    case ERR_NAK_CRC: return "tag refused the write: parity or CRC error in the command";
+    case ERR_NAK_AUTH: return "tag refused the write: authentication counter overflow";
+    case ERR_NAK_EEPROM: return "tag refused the write: EEPROM write error";
+    case ERR_NAK_OTHER: return "tag refused the write: unknown NAK code";
     default: return "unknown error";
   }
 }

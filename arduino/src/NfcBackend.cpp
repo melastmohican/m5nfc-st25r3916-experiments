@@ -61,6 +61,9 @@ int NfcBackend::transmit(const uint8_t* apdu, size_t len, uint8_t* resp, size_t 
     case 0xCA: rc = getData(apdu[2], apdu, len, resp, cap, respLen); break;
     case 0xB0: rc = readBinary(apdu[3], apdu, len, resp, cap, respLen); break;
     case 0xD6: rc = updateBinary(apdu[3], apdu, len, resp, cap, respLen); break;
+    case 0x60:  // NTAG GET_VERSION, FF 60 00 00 00
+    case 0x3C:  // READ_SIG, FF 3C 00 00 00
+    case 0x39: rc = ident(apdu, len, resp, cap, respLen); break;  // READ_CNT, FF 39 00 02 00
     default:
       sw(resp, respLen, 0x6D, 0x00);  // instruction not supported
       return ccid::BE_OK;
@@ -70,6 +73,24 @@ int NfcBackend::transmit(const uint8_t* apdu, size_t len, uint8_t* resp, size_t 
     return ccid::BE_ABSENT;
   }
   return rc == OK ? ccid::BE_OK : ccid::BE_ERROR;
+}
+
+int NfcBackend::ident(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* n) {
+  (void)len;
+  uint8_t buf[32];
+  size_t got = 0;
+  int rc = tag_.identCmd((Ident)apdu[1], apdu[3], buf, &got);  // P2 is the address byte
+  if (rc == ERR_REFUSED) {
+    sw(resp, n, 0x6A, 0x81);  // not supported, or refused with a NAK
+    return OK;
+  }
+  if (rc != OK) return rc;  // a missing tag comes back as ERR_TIMEOUT: reported absent by transmit()
+  if (got + 2 > cap) return ERR_PARAM;
+  memcpy(resp, buf, got);
+  resp[got] = 0x90;
+  resp[got + 1] = 0x00;
+  *n = got + 2;
+  return OK;
 }
 
 int NfcBackend::getData(uint8_t p1, const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap,
@@ -126,7 +147,8 @@ int NfcBackend::updateBinary(uint8_t page, const uint8_t* apdu, size_t len, uint
   }
   if (rc == ERR_TIMEOUT) return rc;
   if (rc == ERR_PROTECTED) sw(resp, n, 0x69, 0x82);
-  else sw(resp, n, 0x65, 0x81);  // memory failure
+  else if (rc == ERR_NAK_ARG) sw(resp, n, 0x6A, 0x82);  // the tag refused the page address
+  else sw(resp, n, 0x65, 0x81);  // memory failure (any other NAK, or a failed read-back)
   return OK;
 }
 

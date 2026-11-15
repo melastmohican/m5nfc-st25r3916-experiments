@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "Ident.h"
 #include "Ndef.h"
 #include "Nfca.h"
 #include "St25r3916.h"
@@ -29,6 +30,11 @@ class Ntag215 {
 
   // Lock/config/CC pages (outside 4..129) need force=true and their bits are one-way.
   int writePage(uint8_t page, const uint8_t data[PAGE_SIZE], bool force = false, bool verify = true);
+
+  // GET_VERSION (8 bytes), READ_SIG (32), READ_CNT (3). `addr` is the address byte of READ_SIG (0x00)
+  // and READ_CNT (0x02). If the tag does not answer, it is selected again: a tag that still answers
+  // refused the command (ERR_REFUSED); otherwise the original error (no card) is returned.
+  int identCmd(Ident which, uint8_t addr, uint8_t* out, size_t* len);
 
   // 512 bytes (pages 4..131); only the first USER_BYTES are user memory.
   int readUserMemory(uint8_t out[USER_READ_BYTES]);

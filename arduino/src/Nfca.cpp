@@ -110,8 +110,16 @@ int t2Write(St25r3916& rf, uint8_t page, const uint8_t data[4]) {
   int rc = rf.transceive(cmd, 6, resp, sizeof(resp), &n, /*txCrc=*/true, /*rxCrc=*/false,
                          /*timeoutMs=*/10, /*shortRx=*/true);
   if (rc != OK) return rc;
-  if (n == 0 || (resp[0] & 0x0F) != T2_ACK) return ERR_NO_ACK;
-  return OK;
+  if (n == 0) return ERR_NO_ACK;
+  // 4-bit ACK/NAK (NTAG21x datasheet 9.3, Table 23)
+  switch (resp[0] & 0x0F) {
+    case T2_ACK: return OK;
+    case 0x0: return ERR_NAK_ARG;
+    case 0x1: return ERR_NAK_CRC;
+    case 0x4: return ERR_NAK_AUTH;
+    case 0x5: return ERR_NAK_EEPROM;
+    default: return ERR_NAK_OTHER;
+  }
 }
 
 }  // namespace nfc

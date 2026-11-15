@@ -31,6 +31,12 @@ enum Status : int {
   ERR_TOO_LARGE = -12,    // NDEF message does not fit the tag
   ERR_NO_CC = -13,        // capability container missing
   ERR_NDEF = -14,         // malformed NDEF data
+  ERR_REFUSED = -15,      // the tag did not run a read-only command (NAK, or it does not know it)
+  ERR_NAK_ARG = -16,      // WRITE NAK 0h: invalid argument (bad page address)
+  ERR_NAK_CRC = -17,      // WRITE NAK 1h: parity or CRC error in the command
+  ERR_NAK_AUTH = -18,     // WRITE NAK 4h: authentication counter overflow
+  ERR_NAK_EEPROM = -19,   // WRITE NAK 5h: EEPROM write error
+  ERR_NAK_OTHER = -20,    // WRITE NAK with another code
 };
 
 const char* statusName(int status);

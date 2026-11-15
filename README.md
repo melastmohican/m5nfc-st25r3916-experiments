@@ -77,7 +77,7 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 |---|---|---|---|---|---|
 | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | no serial command line | yes | yes | yes |
 | `cycles` | no | no | yes | yes | yes |
-| `ident` and the `FF 60/3C/39` APDUs | no | no | no | no | yes |
+| `ident` and the `FF 60/3C/39` APDUs | no | no | yes | no | yes |
 | `desfire` | no | no | no | no | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
 | ISO-DEP pass-through, ATR from the ATS | n/a | no | no | no | yes |

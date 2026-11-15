@@ -57,8 +57,11 @@ The card's ATR is the standard PC/SC contactless ATR for Ultralight-family tags:
 | `FF CA 00 00 <Le>` | UID (`Le` = 0 returns all of it) | UID + `90 00` |
 | `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16), up to 255 | data + `90 00` |
 | `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back to verify | `90 00` |
+| `FF 60 00 00 00` | NTAG `GET_VERSION` | 8 bytes + `90 00` |
+| `FF 3C 00 00 00` | NTAG `READ_SIG` | 32 bytes + `90 00` |
+| `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes + `90 00`, or `6A 81` if the tag refuses |
 
-Status words other than success: `6A 82` page out of range, `69 82` write refused (UID, lock bytes, capability container, configuration and password pages), `65 81` memory failure, `67 00` wrong length, `6B 00` bad P1/P2, `6D 00` unknown instruction, `6E 00` unknown class. User memory is pages 4 to 129.
+Status words other than success: `6A 82` page out of range (or the tag refused the page address), `6A 81` the tag refused an `ident` command or does not support it, `69 82` write refused (UID, lock bytes, capability container, configuration and password pages), `65 81` memory failure (a failed read-back or any other NAK from the tag), `67 00` wrong length, `6B 00` bad P1/P2, `6D 00` unknown instruction, `6E 00` unknown class. User memory is pages 4 to 129.
 
 ### As a serial command line
 
@@ -72,6 +75,7 @@ Open the Feather's USB serial port at 115200 baud (`pio device monitor`, or any 
 | `read-ndef` | Decodes the NDEF message: text and URI records. |
 | `write-ndef [--text "T"] [--lang L] [--uri U]` | Writes a text and/or URI record, replacing the current message. Pages that already match are skipped. |
 | `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
+| `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |
 | `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. |
 | `help` | Lists the commands. |
 

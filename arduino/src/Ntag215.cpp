@@ -53,6 +53,26 @@ int Ntag215::writePage(uint8_t page, const uint8_t data[PAGE_SIZE], bool force, 
   return OK;
 }
 
+int Ntag215::identCmd(Ident which, uint8_t addr, uint8_t* out, size_t* len) {
+  const uint8_t tx[2] = {(uint8_t)which, addr};
+  const size_t txLen = which == Ident::Version ? 1 : 2;
+  const size_t want = which == Ident::Version ? 8 : which == Ident::Signature ? 32 : 3;
+  uint8_t buf[34 + 2];  // reply plus the CRC_A the chip leaves in the FIFO
+  size_t n = 0;
+  int rc = rf_.transceive(tx, txLen, buf, sizeof(buf), &n, /*txCrc=*/true, /*rxCrc=*/true, /*timeoutMs=*/5);
+  if (rc == OK && n == want) {
+    memcpy(out, buf, n);
+    *len = n;
+    return OK;
+  }
+  if (rc == OK) rc = ERR_BAD_RESPONSE;
+  if (rc == ERR_TIMEOUT || rc == ERR_FRAME || rc == ERR_BAD_RESPONSE) {
+    Card c;
+    if (selectCard(rf_, c) == OK) return ERR_REFUSED;  // still there: it refused the command
+  }
+  return rc;
+}
+
 int Ntag215::readUserMemory(uint8_t out[USER_READ_BYTES]) {
   size_t o = 0;
   for (uint8_t page = USER_FIRST; page <= USER_LAST; page += 4) {  // 4, 8, .. 128
