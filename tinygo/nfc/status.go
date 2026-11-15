@@ -21,6 +21,7 @@ var (
 	ErrNoCC        = errors.New("capability container missing")
 	ErrNDEF        = errors.New("malformed NDEF data")
 	ErrRefused     = errors.New("the tag refused the command or does not support it")
+	ErrProtocol    = errors.New("ISO-DEP protocol error")
 
 	// 4-bit NAK a tag sends after a refused WRITE (NTAG21x datasheet 9.3, Table 23)
 	ErrNakArg    = errors.New("tag refused the write: invalid argument (bad page address)")

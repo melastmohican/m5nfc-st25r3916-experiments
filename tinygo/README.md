@@ -3,7 +3,7 @@
 Go firmware ([TinyGo](https://tinygo.org/)) for an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). It does the same two things as [`../arduino`](../arduino), over the Feather's one USB cable:
 
 - **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader, so `pyscard`, OpenSC and `pcsctest` work with it.
-- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `cycles`).
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`).
 
 ```
 Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -68,6 +68,7 @@ Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds aft
 | `nfc/st25r3916.go` | Chip driver over a `Transport` interface (registers, FIFO, `Transceive`). |
 | `nfc/nfca.go` | CRC_A, WUPA, anticollision, select, Type 2 READ and WRITE. |
 | `nfc/ntag215.go` | Memory model, write guards with read-back, NDEF read and write. |
+| `nfc/isodep.go` | ISO 14443-4 block protocol: RATS, I-block framing, chaining, waiting-time extension, retries, deselect, plus the DESFire command wrapper. Ported from `../arduino/src/IsoDep.cpp` (itself a port of embassy-rs/rnfc) and tested against the ISO 14443-4 Annex B scenarios in `go test`. |
 | `nfc/ident.go` | NTAG `GET_VERSION`, `READ_SIG`, `READ_CNT`, the type names, and the NAK mapping for refused writes. |
 | `nfc/ndef.go` | NDEF text and URI records, TLV wrapper. |
 | `nfc/cli.go` | The serial command line (takes an `io.Writer`, so it runs on the host too). |
@@ -86,11 +87,11 @@ TinyGo's USB stack lets a program replace the configuration descriptor and regis
 go test ./nfc ./ccid     # host: CRC_A, NDEF round trip, tokenizer, CCID message layer
 ```
 
-On hardware, with a tag on the unit (2026-11-13): `chip`, `detect`, `dump`, NDEF write and read, and `cycles 50` give 50 of 50 full dumps at about 184 ms each. Over PC/SC: ATR, UID, page reads, refused lock-page write, NDEF round trip, and insert and remove events all pass. A 255-byte read takes about 64 ms. `ident`, the three identification APDUs and the NAK messages were added on 2026-11-14 and checked the same way (`cycles 20` 20/20 at 183 ms); a refused write was not provoked on hardware.
+On hardware, with a tag on the unit (2026-11-13): `chip`, `detect`, `dump`, NDEF write and read, and `cycles 50` give 50 of 50 full dumps at about 184 ms each. Over PC/SC: ATR, UID, page reads, refused lock-page write, NDEF round trip, and insert and remove events all pass. A 255-byte read takes about 64 ms. `ident`, the three identification APDUs and the NAK messages were added on 2026-11-14 and checked the same way (`cycles 20` 20/20 at 183 ms); a refused write was not provoked on hardware. `desfire` was checked on a MIFARE DESFire EV1 4K (ORCA card): the ATS, version and application IDs match the Arduino and Rust variants.
 
 ## Limits
 
-- Type 2 tags only; DESFire and other cards are detected but not readable.
+- Type 2 tags can be read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents) but are not passed through the PC/SC reader yet.
 - The reader has no product string yet, so macOS shows it as `11914 10` (USB vendor and product ID).
 - No fake-chip test for the driver (the Python variant has one), only hardware runs.
 - Serial commands and the PC/SC reader share the chip; a long `cycles` delays PC/SC answers.

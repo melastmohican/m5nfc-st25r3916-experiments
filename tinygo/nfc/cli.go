@@ -21,7 +21,7 @@ type Cli struct {
 }
 
 const helpText = "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n" +
-	"          write-page <page> <8 hex> [--force] | ident | cycles [N] | help\n"
+	"          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help\n"
 
 // tokenize splits on whitespace; double quotes group words.
 func tokenize(line string) []string {
@@ -73,6 +73,8 @@ func (c *Cli) Run(line string) {
 		err = c.writePage(argv[1:])
 	case "ident":
 		err = c.ident()
+	case "desfire":
+		err = c.desfire()
 	case "cycles":
 		err = c.cycles(argv[1:])
 	case "help":
@@ -104,6 +106,10 @@ func (c *Cli) detect() error {
 	}
 	c.printf("UID:  %s\n", card.UIDHex())
 	c.printf("ATQA: %02X%02X  SAK: 0x%02X\n", card.ATQA[0], card.ATQA[1], card.SAK)
+	if card.SAK&0x20 != 0 { // SAK bit 6: the card speaks ISO 14443-4 and does not answer Type 2 READ
+		c.printf("Type: ISO-DEP card (ISO 14443-4); try `desfire`\n")
+		return nil
+	}
 	is215, err := Ntag215{c.RF}.IsNtag215()
 	if err != nil {
 		return err
@@ -238,6 +244,47 @@ func (c *Cli) writePage(args []string) error {
 		return err
 	}
 	c.printf("page %d = %02X (verified where readable)\n", page, data)
+	return nil
+}
+
+// desfire runs ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what the card reveals
+// without keys.
+func (c *Cli) desfire() error {
+	card, err := SelectCard(c.RF)
+	if err != nil {
+		return err
+	}
+	c.printf("UID:  %s\nATQA: %02X%02X  SAK: 0x%02X\n", card.UIDHex(), card.ATQA[0], card.ATQA[1], card.SAK)
+	if card.SAK&0x20 == 0 {
+		return ErrRefused // not an ISO-DEP card
+	}
+	dep := NewIsoDep(RfIsoDepLink{c.RF})
+	if err := dep.Activate(); err != nil {
+		return err
+	}
+	c.printf("ATS:  % X\n", dep.ATS())
+	v, vsw1, vsw2, err := DesfireCommand(dep, 0x60)
+	if err != nil {
+		return err
+	}
+	aids, asw1, asw2, err := DesfireCommand(dep, 0x6A)
+	_ = dep.Deselect()
+	if err != nil {
+		return err
+	}
+	if len(v) >= 28 {
+		storage := 0
+		if v[5]&1 == 0 {
+			storage = 1 << (v[5] >> 1)
+		}
+		c.printf("Version: HW %d.%d SW %d.%d vendor 0x%02X type 0x%02X storage %d bytes\n", v[3], v[4], v[10], v[11], v[0], v[1], storage)
+		c.printf("Card UID: %s  production week %02X year %02X\n", Card{UID: v[14:21]}.UIDHex(), v[26], v[27])
+	}
+	c.printf("GET_VERSION status: %02X %02X\n", vsw1, vsw2)
+	c.printf("GET_APPLICATION_IDS status: %02X %02X\n", asw1, asw2)
+	for i := 0; i+3 <= len(aids); i += 3 {
+		c.printf("  AID %02X %02X %02X\n", aids[i], aids[i+1], aids[i+2])
+	}
 	return nil
 }
 
