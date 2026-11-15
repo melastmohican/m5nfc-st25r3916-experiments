@@ -15,24 +15,65 @@ use heapless::Vec;
 use m5nfc::ccid::{self, BeError, Backend, MAX_DATA};
 use m5nfc::tag;
 
+use crate::isodep::{self, Cmd, Resp};
 use crate::nfc::{self, NfcError, Rf};
 
 pub type SharedRf = Mutex<CriticalSectionRawMutex, Rf>;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Mode {
+    /// Type 2 tag: every call opens its own session and re-selects.
+    Type2,
+    /// ISO-DEP card (DESFire): the isodep task keeps it activated between APDUs.
+    IsoDep,
+}
+
 pub struct NfcBackend {
     rf: &'static SharedRf,
     powered: bool,
+    mode: Mode,
     uid: Vec<u8, 10>,
 }
 
 impl NfcBackend {
+    /// Closes an open ISO-DEP session (deselects the card and releases the chip).
+    async fn end_isodep(&mut self) {
+        if self.mode == Mode::IsoDep {
+            self.mode = Mode::Type2;
+            if isodep::OPEN.load(core::sync::atomic::Ordering::Acquire) {
+                isodep::CMD.send(Cmd::Close).await;
+            }
+        }
+    }
+
+    /// Passes an APDU of any class to an ISO-DEP card (no `FF` pseudo-APDU translation).
+    async fn transmit_isodep(&mut self, apdu: &[u8], resp: &mut Vec<u8, MAX_DATA>) -> Result<(), BeError> {
+        if !isodep::OPEN.load(core::sync::atomic::Ordering::Acquire) {
+            self.powered = false;
+            return Err(BeError::Absent);
+        }
+        let Ok(cmd) = Vec::from_slice(apdu) else { return Err(BeError::Hw) };
+        isodep::CMD.send(Cmd::Transmit(cmd)).await;
+        match isodep::RESP.receive().await {
+            Resp::Data(Ok(v)) => resp.extend_from_slice(&v).map_err(|_| BeError::Hw),
+            Resp::Data(Err(e)) => {
+                self.powered = false;
+                Err(e)
+            }
+            Resp::Opened(_) => Err(BeError::Hw),
+        }
+    }
+
     pub fn new(rf: &'static SharedRf) -> Self {
-        Self { rf, powered: false, uid: Vec::new() }
+        Self { rf, powered: false, mode: Mode::Type2, uid: Vec::new() }
     }
 }
 
 /// Is a card on the reader right now?
 pub async fn card_present(rf: &'static SharedRf) -> bool {
+    if isodep::OPEN.load(core::sync::atomic::Ordering::Acquire) {
+        return true; // an ISO-DEP session holds the chip; it ends itself if the card goes away
+    }
     let mut g = rf.lock().await;
     nfc::open(&mut g).await.is_ok()
 }
@@ -47,6 +88,13 @@ fn soft_absent(e: NfcError) -> bool {
 
 impl Backend for NfcBackend {
     async fn status(&mut self) -> Result<u8, BeError> {
+        if self.powered && self.mode == Mode::IsoDep {
+            if isodep::OPEN.load(core::sync::atomic::Ordering::Acquire) {
+                return Ok(ccid::ICC_ACTIVE);
+            }
+            self.powered = false;
+            return Ok(ccid::ICC_ABSENT);
+        }
         let mut g = self.rf.lock().await;
         match nfc::open(&mut g).await {
             Ok(s) if self.powered && s.uid == self.uid => Ok(ccid::ICC_ACTIVE),
@@ -64,26 +112,45 @@ impl Backend for NfcBackend {
     }
 
     async fn power_on(&mut self) -> Result<Vec<u8, 32>, BeError> {
+        self.end_isodep().await;
         self.powered = false;
         let mut g = self.rf.lock().await;
-        match nfc::open(&mut g).await {
-            Ok(s) => {
-                self.uid = s.uid.clone();
+        let (uid, iso_dep) = match nfc::open(&mut g).await {
+            Ok(s) => (s.uid.clone(), s.sak & 0x20 != 0),
+            Err(e) if soft_absent(e) => return Err(BeError::Absent),
+            Err(_) => return Err(BeError::Hw),
+        };
+        drop(g);
+        self.uid = uid;
+        if !iso_dep {
+            self.mode = Mode::Type2;
+            self.powered = true;
+            return Ok(ccid::contactless_atr());
+        }
+        // ISO 14443-4 card: activate it for good and answer with an ATR built from its ATS.
+        isodep::CMD.send(Cmd::Open).await;
+        match isodep::RESP.receive().await {
+            Resp::Opened(Ok(o)) => {
+                self.mode = Mode::IsoDep;
                 self.powered = true;
-                Ok(ccid::contactless_atr())
+                Ok(ccid::atr_from_ats(&o.ats).unwrap_or_else(ccid::contactless_atr))
             }
-            Err(e) if soft_absent(e) => Err(BeError::Absent),
-            Err(_) => Err(BeError::Hw),
+            Resp::Opened(Err(e)) => Err(e),
+            Resp::Data(_) => Err(BeError::Hw),
         }
     }
 
     async fn power_off(&mut self) {
+        self.end_isodep().await;
         self.powered = false;
     }
 
     async fn transmit(&mut self, apdu: &[u8], resp: &mut Vec<u8, MAX_DATA>) -> Result<(), BeError> {
         if !self.powered {
             return Err(BeError::Absent);
+        }
+        if self.mode == Mode::IsoDep {
+            return self.transmit_isodep(apdu, resp).await;
         }
         if apdu.len() < 4 {
             sw(resp, 0x67, 0x00);

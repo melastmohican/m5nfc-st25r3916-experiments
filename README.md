@@ -40,7 +40,7 @@ The four Feather variants present a standard CCID reader, so the Mac needs no cu
 | Talks to the unit through | FT232H via `pyftdi` | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1), driver crate `rnfc-st25r39` |
 | Extra hardware | FT232H breakout | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable |
 | Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
-| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | pseudo-APDUs `FF CA` (UID), `FF B0` (read), `FF D6` (write) | the same pseudo-APDUs, and the serial CLI: the `python/` commands plus `cycles` | the same pseudo-APDUs, and the same serial CLI as `arduino/` | the same pseudo-APDUs and serial CLI as `arduino/` |
+| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | pseudo-APDUs `FF CA` (UID), `FF B0` (read), `FF D6` (write) | the same pseudo-APDUs, and the serial CLI: the `python/` commands plus `cycles` | the same pseudo-APDUs, and the same serial CLI as `arduino/` | the same pseudo-APDUs and serial CLI as `arduino/`, plus DESFire APDU pass-through and a `desfire` command |
 | Live card insert and remove events | no | yes | yes | yes | yes |
 | Full 135-page dump | about 7 s | not measured | about 180 ms | about 184 ms | about 167 ms |
 | Longest read per command | n/a | 48 bytes tested | 255 bytes | 255 bytes | 255 bytes |
@@ -57,7 +57,7 @@ How to choose:
 ## Supported tags and limits
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
-- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, need an ISO-DEP layer that is not implemented.
+- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, need an ISO-DEP layer: only `rust/` has one (it identifies the card and passes unauthenticated commands through; file contents need keys).
 - The unit is powered from the Feather's Qwiic 3.3V, or from 5V with the FT232H. Read range was tested only with a tag lying on the unit.
 
 ## Getting started

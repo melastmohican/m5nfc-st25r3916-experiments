@@ -61,6 +61,14 @@ Same APDUs, status words and ATR as [`../arduino`](../arduino/README.md#as-a-pcs
 | `FF B0 00 <page> <Le>` | Read `Le` bytes from `page` (`Le` = 0 reads 16), up to 255 | data + `90 00` |
 | `FF D6 00 <page> 04 <4 bytes>` | Write one page, then read it back | `90 00` |
 
+**ISO-DEP cards (DESFire).** If the card's SAK says it speaks ISO 14443-4, power-on also runs RATS and answers with an ATR built from the card's ATS (for a DESFire EV1: `3B 81 80 01 80 80`). Any APDU is then passed to the card, so DESFire native commands wrapped as `90 INS 00 00 00` work, including the "additional frame" chain across separate commands:
+
+```
+opensc-tool -s 9060000000 -s 90AF000000 -s 90AF000000    # GET_VERSION in three frames
+```
+
+The card stays activated between APDUs, in a task of its own (`src/isodep.rs`). While it is open that task holds the chip, so the serial command line waits, and the session closes by itself after 20 s without commands. While a session is open the reader does not probe for the card, so a removed card is noticed on the next command instead of through a slot-change event. Only unauthenticated commands were tried; there is no key handling.
+
 Check it with the scripts in [`../micropython`](../micropython) (`uv run --with pyscard python <script>`): `pcsc_check.py`, `pcsc_monitor.py`, `pcsc_ndef_roundtrip.py`.
 
 ### As a serial command line
@@ -82,7 +90,8 @@ Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds aft
 | `src/parse.rs` | Command-line tokenizer and hex parsing. |
 | `src/main.rs` | Clocks, I2C1, USB, tasks. Holds the dummy IRQ pin type. |
 | `src/nfc.rs` | One field-on session over `rnfc`: select, Type 2 READ and WRITE, NTAG215 dump, NDEF. |
-| `src/backend.rs` | Maps the pseudo-APDUs onto the tag. |
+| `src/backend.rs` | Maps the pseudo-APDUs onto the tag; hands ISO-DEP cards to `isodep.rs`. |
+| `src/isodep.rs` | The task that keeps an ISO-DEP card activated between APDUs. |
 | `src/class.rs` | The USB CCID class on embassy-usb. |
 | `src/cli.rs` | The serial command line. |
 
@@ -103,7 +112,7 @@ On hardware, with a tag on the unit (2026-11-14): `chip`, `detect`, `dump`, NDEF
 
 ## Limits
 
-- Type 2 tags are read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents), but not read through PC/SC yet: the CCID reader still refuses non-`FF` APDUs.
+- Type 2 tags are read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents), and unauthenticated DESFire commands can be passed through the PC/SC reader (see above); nothing that needs keys.
 - The records written by this variant have not been checked with a phone.
 - No fake-chip test for the driver; it comes from `rnfc-st25r39` and is tested only on hardware.
 - Depends on git crates (`rnfc*`) pinned to one commit, and on the local patch above.

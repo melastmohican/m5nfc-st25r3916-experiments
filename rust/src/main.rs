@@ -17,6 +17,7 @@ use rnfc_st25r39::{I2cInterface, Interface, St25r39};
 mod backend;
 mod class;
 mod cli;
+mod isodep;
 mod nfc;
 use static_cell::StaticCell;
 
@@ -82,6 +83,7 @@ async fn main(spawner: Spawner) {
     static RF: StaticCell<backend::SharedRf> = StaticCell::new();
     let rf: &'static backend::SharedRf = RF.init(Mutex::new(St25r39::new(iface, nfc::NoIrq).await.unwrap()));
     spawner.spawn(ccid_task(ccid, rf).unwrap());
+    spawner.spawn(isodep::task(rf).unwrap());
     let mut cli = cli::Cli::new(cdc, ident, rf);
     cli.run().await
 }

@@ -66,6 +66,25 @@ pub fn contactless_atr() -> Vec<u8, 32> {
     out
 }
 
+/// PC/SC part 3 ATR for an ISO 14443-4 (ISO-DEP) card, built from its ATS: TS=3B,
+/// T0=0x80|K, TD1=0x80, TD2=0x01, the K historical bytes, TCK. `ats` starts with its length byte.
+pub fn atr_from_ats(ats: &[u8]) -> Option<Vec<u8, 32>> {
+    let (&tl, rest) = ats.split_first()?;
+    let t0 = *rest.first()?;
+    let skip = 1 + (t0 & 0x10 != 0) as usize + (t0 & 0x20 != 0) as usize + (t0 & 0x40 != 0) as usize;
+    let end = (tl as usize).min(ats.len());
+    let hist = ats.get(1 + skip..end).unwrap_or(&[]);
+    if hist.len() > 15 {
+        return None;
+    }
+    let mut out: Vec<u8, 32> = Vec::new();
+    out.extend_from_slice(&[0x3B, 0x80 | hist.len() as u8, 0x80, 0x01]).ok()?;
+    out.extend_from_slice(hist).ok()?;
+    let tck = out[1..].iter().fold(0, |a, b| a ^ b);
+    out.push(tck).ok()?;
+    Some(out)
+}
+
 /// RDR_to_PC_NotifySlotChange: 2 bytes.
 pub fn slot_change_message(present: bool, changed: bool) -> [u8; 2] {
     [NOTIFY_SLOT_CHANGE, present as u8 | (changed as u8) << 1]
@@ -188,6 +207,16 @@ mod tests {
         assert_eq!(a.len(), 20);
         assert_eq!(a[0], 0x3B);
         assert_eq!(a[1..].iter().fold(0, |x, b| x ^ b), 0);
+    }
+
+    #[test]
+    fn atr_from_desfire_ats() {
+        // ATS of a MIFARE DESFire EV1: TL=6, T0=75, TA, TB, TC, one historical byte 0x80.
+        let atr = atr_from_ats(&[0x06, 0x75, 0x77, 0x81, 0x02, 0x80]).unwrap();
+        assert_eq!(atr.as_slice(), &[0x3B, 0x81, 0x80, 0x01, 0x80, 0x80]);
+        // No TA/TB/TC and no historical bytes.
+        assert_eq!(atr_from_ats(&[0x02, 0x00]).unwrap().as_slice(), &[0x3B, 0x80, 0x80, 0x01, 0x01]);
+        assert!(atr_from_ats(&[]).is_none());
     }
 
     #[test]
