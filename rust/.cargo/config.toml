@@ -1,0 +1,7 @@
+[build]
+target = "thumbv8m.main-none-eabihf"
+
+[target.thumbv8m.main-none-eabihf]
+rustflags = ["-C", "link-arg=--nmagic", "-C", "link-arg=-Tlink.x", "-C", "target-cpu=cortex-m33"]
+# No SWD probe: put the Feather in BOOTSEL (RP2350 drive) and let elf2uf2-rs copy the image.
+runner = "elf2uf2-rs -d"

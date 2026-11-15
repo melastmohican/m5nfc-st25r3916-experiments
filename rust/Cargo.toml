@@ -1,0 +1,48 @@
+[package]
+name = "m5nfc-rust"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+# Host tests (CCID message layer) run with `cargo test --lib --target aarch64-apple-darwin`.
+[lib]
+name = "m5nfc"
+path = "src/lib.rs"
+
+[[bin]]
+name = "m5nfc-rust"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+heapless = "0.9"
+embassy-futures = "0.1"
+
+[target.'cfg(all(target_arch = "arm", target_os = "none"))'.dependencies]
+embassy-executor = { version = "0.10", features = ["platform-cortex-m", "executor-thread"] }
+embassy-rp = { version = "0.10", features = ["unstable-pac", "time-driver", "critical-section-impl", "rp235xa", "binary-info"] }
+embassy-time = "0.5"
+embassy-usb = "0.6"
+embassy-sync = "0.8"
+static_cell = "2"
+panic-halt = "1"
+cortex-m = { version = "0.7", features = ["inline-asm"] }
+cortex-m-rt = "0.7"
+embedded-hal = "1"
+embedded-hal-async = "1"
+ndef = "0.7"
+# ST25R3916 driver (I2C) and ISO14443-A poller: git-only, not on crates.io.
+rnfc-st25r39 = { git = "https://github.com/embassy-rs/rnfc", rev = "4711debbad00b1da7862238ce5d02be7b0a7709e" }
+rnfc = { git = "https://github.com/embassy-rs/rnfc", rev = "4711debbad00b1da7862238ce5d02be7b0a7709e" }
+
+[profile.release]
+opt-level = "s"
+lto = "fat"
+codegen-units = 1
+debug = 2
+
+[patch."https://github.com/embassy-rs/rnfc"]
+rnfc = { path = "vendor/rnfc/rnfc" }
+rnfc-st25r39 = { path = "vendor/rnfc/rnfc-st25r39" }
+rnfc-traits = { path = "vendor/rnfc/rnfc-traits" }
