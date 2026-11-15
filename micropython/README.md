@@ -1,9 +1,9 @@
-# micropython: USB NFC reader (PC/SC) on a Feather RP2350
+# micropython: USB NFC reader (PC/SC) and serial tool on a Feather RP2350
 
-MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`.
+MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader and a serial command line. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`. The board's USB serial port takes the same commands as the other variants (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `cycles`).
 
 ```
-Mac --USB (CCID / PC/SC)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
+Mac --USB (CCID / PC/SC + serial)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
 ```
 
 ## What you need
@@ -32,8 +32,9 @@ The unit has an on-board regulator and pull-ups to its own 3.3V rail, and it run
    ```
 3. From this folder, copy the files to the board:
    ```
+   rm -rf nfc/__pycache__      # host caches from running the tests; they only waste board flash
    mpremote cp -r nfc :
-   mpremote cp main.py ccid_proto.py nfc_backend.py ccid_reader.py :
+   mpremote cp main.py ccid_proto.py nfc_backend.py ccid_reader.py cli.py :
    ```
 4. Unplug and replug the Feather. About 4 seconds later the Mac lists a reader named `Experiment NFC CCID reader`.
 
@@ -50,6 +51,22 @@ brew install opensc && opensc-tool -s FFCA000000
 
 The card's ATR is the standard PC/SC contactless ATR for Ultralight-family tags: `3B 8F 80 01 80 4F 0C A0 00 00 03 06 03 00 03 00 00 00 00 68`. The reader tells the Mac when a card appears or disappears, so PC/SC applications get live insert and remove events.
 
+### As a serial command line
+
+Open the board's USB serial port at 115200 baud (the reader and the console share one cable). After the 4-second start-up window the commands are available; type one per line and every command ends with `ok` or `error: ...`:
+
+| Command | What it does |
+|---|---|
+| `chip` | Checks that the ST25R3916 answers. |
+| `detect` | Finds a card and prints UID, ATQA and SAK; says `Type: NTAG215`, or that an ISO-DEP card needs `desfire`. |
+| `dump` | Prints all 135 pages. |
+| `read-ndef` | Decodes the NDEF message. |
+| `write-ndef [--text T] [--lang L] [--uri U]` | Writes text and/or URI records. |
+| `write-page <page> <8 hex> [--force]` | Writes one page and reads it back. |
+| `cycles [N]` | N rounds of select and full dump (a full dump takes about 260 ms here). |
+
+The commands and their output are the same as in the other variants (see the shared interface in the top-level README); error texts for refused pages come from the Python driver and read differently. The commands share the chip with the PC/SC reader: a long command such as `cycles` delays PC/SC answers, and a command that selects the card resets the RF field. The REPL is not available while the reader runs, and Ctrl-C is switched off so a stray key cannot stop the reader.
+
 ### Commands (pseudo-APDUs)
 
 | APDU | Meaning | Reply |
@@ -64,7 +81,7 @@ Reads of up to 48 bytes per command are tested.
 
 ## Boot and recovery
 
-`main.py` waits 4 seconds and then starts the reader. While the reader runs, the board's USB serial port (the REPL) is off, so `mpremote` cannot reach it. Ways back in:
+`main.py` waits 4 seconds and then starts the reader. While the reader runs, the board's USB serial port carries the command line instead of the REPL, so `mpremote` cannot reach it. Ways back in:
 
 - During the 4-second window the REPL is still up: run `mpremote exec "..."` right after plugging in and it interrupts `main.py`.
 - Or hold BOOTSEL for about 3 seconds right after plugging in. `main.py` then skips the reader and leaves the REPL up.

@@ -2,7 +2,8 @@
 
 During the 4 s window the USB serial REPL is still up, so `mpremote` can interrupt this script.
 Holding BOOTSEL (after plugging in, not while plugging in) skips the reader and leaves the REPL.
-Once the reader runs, the REPL port is off.
+Once the reader runs, the same USB serial port carries the serial command line (cli.py) and the
+REPL is not available.
 """
 import time
 

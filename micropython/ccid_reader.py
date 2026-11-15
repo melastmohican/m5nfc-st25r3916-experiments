@@ -3,15 +3,21 @@
 All NFC/I2C work happens in the main loop (run()), never in USB callbacks, so the
 chip is only ever touched from one place. Callbacks just hand over messages.
 
-The REPL USB serial is off while this runs (builtin_driver=False). Errors are
-appended to /ccid.log.
+The board's USB serial port (the console CDC, builtin_driver=True) carries the serial command
+line from cli.py while this runs; the REPL is not available then, and Ctrl-C is turned off so a
+stray character cannot stop the reader. Errors are appended to /ccid.log.
 """
+import sys
 import time
+
+import micropython
+import select
 
 from usb.device import get as usb_get
 from usb.device.core import Interface
 
 import ccid_proto as cp
+from cli import Cli
 
 _EP_SIZE = 64
 _POLL_MS = 300
@@ -109,9 +115,13 @@ def run(rf):
 
     backend = NfcBackend(rf)
     dev = CcidInterface(cp.CcidSlot(backend))
+    cli = Cli(rf, sys.stdout.write)
+    console = select.poll()
+    console.register(sys.stdin, select.POLLIN)
+    micropython.kbd_intr(-1)  # Ctrl-C arrives as a character instead of raising KeyboardInterrupt
     usb_get().init(
         dev,
-        builtin_driver=False,
+        builtin_driver=True,
         manufacturer_str="Experiment",
         product_str="NFC CCID reader",
     )
@@ -119,6 +129,10 @@ def run(rf):
     while True:
         try:
             dev.service()
+            for _ in range(64):  # typed characters for the serial command line
+                if not console.poll(0):
+                    break
+                cli.feed(sys.stdin.read(1))
             now = time.ticks_ms()
             if dev.is_open() and dev.pending is None and time.ticks_diff(now, last_poll) >= _POLL_MS:
                 last_poll = now

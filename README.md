@@ -5,7 +5,7 @@ Five ways to read and write NTAG215 NFC tags with an [M5Stack NFC Universal Unit
 | Folder | Setup | You use it as |
 |---|---|---|
 | [`python/`](python) | Mac, FT232H breakout, the unit | a command-line tool |
-| [`micropython/`](micropython) | Feather RP2350 running MicroPython, the unit | a USB smart-card (PC/SC) reader |
+| [`micropython/`](micropython) | Feather RP2350 running MicroPython, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 | [`arduino/`](arduino) | Feather RP2350 running Arduino-Pico firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 | [`tinygo/`](tinygo) | Feather RP2350 running TinyGo (Go) firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
 | [`rust/`](rust) | Feather RP2350 running Rust (Embassy) firmware, the unit | a USB smart-card (PC/SC) reader and a serial command line |
@@ -75,8 +75,8 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 
 | | `python/` | `micropython/` | `arduino/` | `tinygo/` | `rust/` |
 |---|---|---|---|---|---|
-| `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | no serial command line | yes | yes | yes |
-| `cycles` | no | no | yes | yes | yes |
+| `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | yes | yes | yes | yes | yes |
+| `cycles` | no | yes | yes | yes | yes |
 | `ident` and the `FF 60/3C/39` APDUs | no | no | yes | yes | yes |
 | `desfire` | no | no | yes | yes | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
@@ -92,19 +92,19 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 | Runs on | Mac (Python 3.10+, `uv`) | Feather RP2350, MicroPython | Feather RP2350, Arduino-Pico (C++, PlatformIO) | Feather RP2350, TinyGo (Go) | Feather RP2350, Rust (Embassy, Cargo) |
 | Talks to the unit through | FT232H via `pyftdi` | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1), driver crate `rnfc-st25r39` |
 | Extra hardware | FT232H breakout | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable |
-| Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
-| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | pseudo-APDUs `FF CA` (UID), `FF B0` (read), `FF D6` (write) | the same pseudo-APDUs, and the serial CLI: the `python/` commands plus `cycles` | the same pseudo-APDUs, and the same serial CLI as `arduino/` | the same pseudo-APDUs and serial CLI as `arduino/`, plus DESFire APDU pass-through and a `desfire` command |
+| Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
+| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page` | pseudo-APDUs `FF CA` (UID), `FF B0` (read), `FF D6` (write), and the serial CLI: the `python/` commands plus `cycles` | the same pseudo-APDUs, and the serial CLI: the `python/` commands plus `cycles` | the same pseudo-APDUs, and the same serial CLI as `arduino/` | the same pseudo-APDUs and serial CLI as `arduino/`, plus DESFire APDU pass-through and a `desfire` command |
 | Live card insert and remove events | no | yes | yes | yes | yes |
-| Full 135-page dump | about 7 s | not measured | about 180 ms | about 184 ms | about 167 ms |
+| Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms |
 | Longest read per command | n/a | 48 bytes tested | 255 bytes | 255 bytes | 255 bytes |
-| Tests | 13, against a software fake chip | 11, for the CCID message layer | host test for the CCID message layer; `cycles` on hardware | host tests for NDEF, CRC and the CCID message layer; `cycles` on hardware | 11 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
-| Reliability run | 50 of 50 dumps | not run | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps |
+| Tests | 14, against a software fake chip | 21: the CCID message layer, and the serial CLI against a fake chip | host test for the CCID message layer; `cycles` on hardware | host tests for NDEF, CRC and the CCID message layer; `cycles` on hardware | 11 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
+| Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps |
 | Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit |
 
 How to choose:
 
 - **`python/`** if you want to script tag access from the Mac and have an FT232H.
-- **`micropython/`**, **`arduino/`**, **`tinygo/`** or **`rust/`** if you want a USB reader that any PC/SC software can use. `arduino/` is faster, handles longer reads and adds the serial command line; `micropython/` is quicker to modify; `tinygo/` is the same as `arduino/` written in Go; `rust/` is the same again in Rust, and the only one that reuses a published chip driver instead of porting one.
+- **`micropython/`**, **`arduino/`**, **`tinygo/`** or **`rust/`** if you want a USB reader that any PC/SC software can use. `arduino/` is faster and handles longer reads; `micropython/` is quicker to modify; `tinygo/` is the same as `arduino/` written in Go; `rust/` is the same again in Rust, and the only one that reuses a published chip driver instead of porting one.
 - Only one firmware can be on a Feather at a time. Switching between `micropython/`, `arduino/`, `tinygo/` and `rust/` means flashing the board again; each README says how.
 
 ## Supported tags and limits
