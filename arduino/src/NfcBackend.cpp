@@ -18,6 +18,9 @@ bool NfcBackend::probe() {
 }
 
 int NfcBackend::status() {
+  // An activated ISO-DEP card cannot be probed without disturbing it (a Type 2 READ would be sent to
+  // a card that speaks ISO 14443-4), so it counts as present until a command fails.
+  if (powered_ && isoDep_) return ccid::ICC_ACTIVE;
   if (powered_) {
     uint8_t buf[16];
     if (t2Read(rf_, 0, buf) == OK) return ccid::ICC_ACTIVE;
@@ -30,10 +33,21 @@ int NfcBackend::status() {
 int NfcBackend::powerOn(uint8_t* atr, size_t cap, size_t* len) {
   rf_.fieldReset();
   powered_ = false;
+  isoDep_ = false;
   int rc = selectCard(rf_, card_);
   if (rc == ERR_TIMEOUT || rc == ERR_COLLISION || rc == ERR_FRAME || rc == ERR_BAD_RESPONSE)
     return ccid::BE_ABSENT;
   if (rc != OK) return ccid::BE_ERROR;
+  if (card_.sak & 0x20) {  // ISO 14443-4 card: activate it (RATS) and answer with an ATR built from its ATS
+    rc = dep_.activate();
+    if (rc == ERR_TIMEOUT || rc == ERR_COLLISION || rc == ERR_FRAME) return ccid::BE_ABSENT;
+    if (rc != OK) return ccid::BE_ERROR;
+    *len = ccid::atrFromAts(dep_.ats(), dep_.atsLen(), atr, cap);
+    if (*len == 0) return ccid::BE_ERROR;
+    isoDep_ = true;
+    powered_ = true;
+    return ccid::BE_OK;
+  }
   *len = ccid::contactlessAtr(atr, cap);
   if (*len == 0) return ccid::BE_ERROR;
   powered_ = true;
@@ -41,6 +55,8 @@ int NfcBackend::powerOn(uint8_t* atr, size_t cap, size_t* len) {
 }
 
 void NfcBackend::powerOff() {
+  if (isoDep_) dep_.deselect();  // best effort: the field is reset next anyway
+  isoDep_ = false;
   powered_ = false;
   rf_.fieldReset();
 }
@@ -48,6 +64,7 @@ void NfcBackend::powerOff() {
 int NfcBackend::transmit(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* respLen) {
   if (!powered_) return ccid::BE_ABSENT;
   if (cap < 2) return ccid::BE_ERROR;
+  if (isoDep_) return transmitIsoDep(apdu, len, resp, cap, respLen);
   if (len < 4) {
     sw(resp, respLen, 0x67, 0x00);
     return ccid::BE_OK;
@@ -91,6 +108,21 @@ int NfcBackend::ident(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap
   resp[got + 1] = 0x00;
   *n = got + 2;
   return OK;
+}
+
+// Any APDU goes to the card unchanged, except the PC/SC get-data for the UID, which the reader answers.
+int NfcBackend::transmitIsoDep(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* respLen) {
+  if (len >= 4 && apdu[0] == 0xFF && apdu[1] == 0xCA) {
+    return getData(apdu[2], apdu, len, resp, cap, respLen) == OK ? ccid::BE_OK : ccid::BE_ERROR;
+  }
+  int rc = dep_.transceive(apdu, len, resp, cap, respLen);
+  if (rc == OK) return ccid::BE_OK;
+  if (rc == ERR_TIMEOUT || rc == ERR_FRAME || rc == ERR_COLLISION || rc == ERR_PROTOCOL) {
+    powered_ = false;  // the card was lifted or the link broke
+    isoDep_ = false;
+    return ccid::BE_ABSENT;
+  }
+  return ccid::BE_ERROR;
 }
 
 int NfcBackend::getData(uint8_t p1, const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap,

@@ -62,6 +62,21 @@ int main() {
   for (size_t i = 1; i < atrLen; i++) x ^= atr[i];
   CHECK(x == 0);
 
+  // ATR from the ATS of a DESFire EV1 (TL=6, T0=75, TA, TB, TC, one historical byte 0x80)
+  {
+    static const uint8_t ats[6] = {0x06, 0x75, 0x77, 0x81, 0x02, 0x80};
+    static const uint8_t want[6] = {0x3B, 0x81, 0x80, 0x01, 0x80, 0x80};
+    uint8_t a[32];
+    size_t n = atrFromAts(ats, sizeof(ats), a, sizeof(a));
+    CHECK(n == 6 && memcmp(a, want, 6) == 0);
+    static const uint8_t bare[2] = {0x02, 0x00};  // no TA/TB/TC, no historical bytes
+    static const uint8_t wantBare[5] = {0x3B, 0x80, 0x80, 0x01, 0x01};
+    n = atrFromAts(bare, sizeof(bare), a, sizeof(a));
+    CHECK(n == 5 && memcmp(a, wantBare, 5) == 0);
+    CHECK(atrFromAts(ats, 1, a, sizeof(a)) == 0);
+    CHECK(atrFromAts(ats, sizeof(ats), a, 4) == 0);
+  }
+
   FakeBackend be;
   Slot slot(be);
 

@@ -60,6 +60,15 @@ The card's ATR is the standard PC/SC contactless ATR for Ultralight-family tags:
 | `FF 60 00 00 00` | NTAG `GET_VERSION` | 8 bytes + `90 00` |
 | `FF 3C 00 00 00` | NTAG `READ_SIG` | 32 bytes + `90 00` |
 | `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes + `90 00`, or `6A 81` if the tag refuses |
+| anything else, card is ISO-DEP | passed to the card unchanged; the card's reply and status words come back | card's reply |
+
+For an ISO-DEP card (a DESFire card, for example) power-on also runs RATS and answers with an ATR built from the card's ATS (`3B 81 80 01 80 80` for a DESFire EV1). The card then stays activated between APDUs, so DESFire native commands wrapped as `90 INS 00 00 00` work, including the "additional frame" chain across separate commands. `FF CA` is still answered by the reader, with the UID:
+
+```
+opensc-tool -s 9060000000 -s 90AF000000 -s 90AF000000    # GET_VERSION in three frames
+```
+
+A serial command that selects the card (`detect`, `dump`, `desfire` and the rest) resets the RF field and ends that session; the next PC/SC command then fails and the host has to connect again. While an ISO-DEP card is powered the reader does not probe for it, so a removed card is noticed on the next command instead of through a slot-change event. Only unauthenticated commands were tried; there is no key handling.
 
 Status words other than success: `6A 82` page out of range (or the tag refused the page address), `6A 81` the tag refused an `ident` command or does not support it, `69 82` write refused (UID, lock bytes, capability container, configuration and password pages), `65 81` memory failure (a failed read-back or any other NAK from the tag), `67 00` wrong length, `6B 00` bad P1/P2, `6D 00` unknown instruction, `6E 00` unknown class. User memory is pages 4 to 129.
 
@@ -145,7 +154,7 @@ The serial `cycles` command is the reliability check: 50 of 50 rounds of select 
 
 ## Limits
 
-- Type 2 tags (NTAG, Ultralight) can be read and written. DESFire cards can be identified with `desfire` (no keys, so no file contents) but are not passed through the PC/SC reader yet.
+- Type 2 tags (NTAG, Ultralight) can be read and written. DESFire cards can be identified with `desfire` and passed through the PC/SC reader (no keys, so no file contents).
 - The first PC/SC answers wait for the 3-second start-up delay.
 - Only one firmware can be on the Feather at a time. [`../micropython`](../micropython) builds the same reader in MicroPython and replaces this one on the board.
 

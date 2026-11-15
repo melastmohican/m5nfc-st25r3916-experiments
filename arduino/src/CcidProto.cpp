@@ -19,6 +19,25 @@ size_t contactlessAtr(uint8_t* out, size_t cap) {
   return 1 + sizeof(body) + 1;
 }
 
+size_t atrFromAts(const uint8_t* ats, size_t atsLen, uint8_t* out, size_t cap) {
+  if (atsLen < 2) return 0;
+  uint8_t t0 = ats[1];
+  size_t skip = 1 + ((t0 & 0x10) ? 1 : 0) + ((t0 & 0x20) ? 1 : 0) + ((t0 & 0x40) ? 1 : 0);
+  size_t end = ats[0] < atsLen ? ats[0] : atsLen;
+  size_t histStart = 1 + skip;
+  size_t k = end > histStart ? end - histStart : 0;
+  if (k > 15 || cap < 5 + k) return 0;
+  out[0] = 0x3B;
+  out[1] = 0x80 | (uint8_t)k;
+  out[2] = 0x80;
+  out[3] = 0x01;
+  for (size_t i = 0; i < k; i++) out[4 + i] = ats[histStart + i];
+  uint8_t tck = 0;
+  for (size_t i = 1; i < 4 + k; i++) tck ^= out[i];
+  out[4 + k] = tck;
+  return 5 + k;
+}
+
 void slotChangeMessage(bool present, bool changed, uint8_t out[2]) {
   out[0] = NOTIFY_SLOT_CHANGE;
   out[1] = (present ? 1 : 0) | (changed ? 2 : 0);

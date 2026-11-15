@@ -80,8 +80,8 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 | `ident` and the `FF 60/3C/39` APDUs | no | no | yes | no | yes |
 | `desfire` | no | no | yes | no | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes |
-| ISO-DEP pass-through, ATR from the ATS | n/a | no | no | no | yes |
-| `FF CA` answered by the reader for ISO-DEP cards | n/a | no | no | no | yes |
+| ISO-DEP pass-through, ATR from the ATS | n/a | no | yes | no | yes |
+| `FF CA` answered by the reader for ISO-DEP cards | n/a | no | yes | no | yes |
 | Insert and remove events | n/a | yes | yes | yes | yes (not while an ISO-DEP session is open) |
 | Same `UID` format everywhere (colons) | yes | n/a | yes | yes | yes |
 

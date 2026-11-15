@@ -58,6 +58,10 @@ class Backend {
 // PC/SC part 3 ATR for an ISO 14443-A part 3 card (MIFARE Ultralight family): 20 bytes
 size_t contactlessAtr(uint8_t* out, size_t cap);
 
+// PC/SC part 3 ATR for an ISO 14443-4 (ISO-DEP) card, built from its ATS (length byte first):
+// TS=3B, T0=0x80|K, TD1=0x80, TD2=0x01, the K historical bytes, TCK. Returns 0 if it does not fit.
+size_t atrFromAts(const uint8_t* ats, size_t atsLen, uint8_t* out, size_t cap);
+
 // RDR_to_PC_NotifySlotChange: 2 bytes
 void slotChangeMessage(bool present, bool changed, uint8_t out[2]);
 

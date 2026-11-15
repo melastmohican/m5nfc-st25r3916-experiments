@@ -7,6 +7,8 @@
 // Lock/config pages are refused (Ntag215::writePage guard) with SW 69 82.
 #pragma once
 #include "CcidProto.h"
+#include "IsoDep.h"
+#include "IsoDepRf.h"
 #include "Nfca.h"
 #include "Ntag215.h"
 #include "St25r3916.h"
@@ -15,7 +17,7 @@ namespace nfc {
 
 class NfcBackend : public ccid::Backend {
  public:
-  explicit NfcBackend(St25r3916& rf) : rf_(rf), tag_(rf) {}
+  explicit NfcBackend(St25r3916& rf) : rf_(rf), tag_(rf), link_(rf), dep_(link_) {}
 
   int status() override;
   int powerOn(uint8_t* atr, size_t cap, size_t* len) override;
@@ -29,11 +31,15 @@ class NfcBackend : public ccid::Backend {
                  size_t* n);
   int updateBinary(uint8_t page, const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap,
                    size_t* n);
+  int transmitIsoDep(const uint8_t* apdu, size_t len, uint8_t* resp, size_t cap, size_t* respLen);
   bool probe();
 
   St25r3916& rf_;
   Ntag215 tag_;
   Card card_;
+  RfIsoDepLink link_;
+  IsoDep dep_;
+  bool isoDep_ = false;   // the powered card is an ISO-DEP card, activated with RATS
   bool powered_ = false;  // set while the host holds the slot powered
 };
 
