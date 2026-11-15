@@ -72,7 +72,7 @@ The reader presents a CCID device. The ATR is `3B 8F 80 01 80 4F 0C A0 00 00 03 
 | `FF 39 00 02 00` | NTAG `READ_CNT` | 3 bytes (counter, low byte first) + `90 00` |
 | anything else, card is ISO-DEP | passed to the card unchanged; the card's reply and status words come back | card's reply |
 
-The code after `FF` is the native command code. Status words: `6A 82` page out of range or the tag refused the page address (NAK `0h`); `69 82` write refused (UID, lock bytes, capability container, configuration, password pages); `65 81` memory failure (any other NAK, or a failed read-back); `67 00` wrong length; `6B 00` bad P1/P2; `6A 81` the tag does not support the command or refused it with a NAK (`ident` APDUs); `6D 00` unknown instruction; `6E 00` unknown class (Type 2 tags). If a Type 2 tag does not answer an `ident` APDU, the reader reselects it: a tag that still answers gives `6A 81`, a missing tag is reported absent.
+The code after `FF` is the native command code. Status words: `6A 82` a read beyond the last page, or the tag refused the page address (NAK `0h`); `69 82` write refused (UID, lock bytes, capability container, configuration, password pages, or a page beyond the last); `65 81` memory failure (any other NAK, or a failed read-back); `67 00` wrong length; `6B 00` bad P1/P2; `6A 81` the tag does not support the command or refused it with a NAK (`ident` APDUs); `6D 00` unknown instruction; `6E 00` unknown class (Type 2 tags). If a Type 2 tag does not answer an `ident` APDU, the reader reselects it: a tag that still answers gives `6A 81`, a missing tag is reported absent.
 
 ### What each folder has today
 
