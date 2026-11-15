@@ -27,6 +27,7 @@ The four Feather variants present a standard CCID reader, so the Mac needs no cu
 ## What all five do
 
 - Find a tag and print its UID, ATQA and SAK, and tell whether it is an NTAG215.
+- Identify an NTAG (`ident`: version, signature, counter) and a DESFire card (`desfire`: ATS, version, application IDs; no keys).
 - Dump all 135 pages (4 bytes each).
 - Read and write NDEF text and URI records. A phone (iPhone, NFC Tools) reads the records written by `python/` and `arduino/`; the `micropython/`, `tinygo/` and `rust/` records have not been checked with a phone.
 - Write single pages, and read each one back to verify it.
@@ -97,7 +98,7 @@ The code after `FF` is the native command code. Status words: `6A 82` page out o
 | Live card insert and remove events | no | yes | yes | yes | yes |
 | Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms |
 | Longest read per command | n/a | 255 bytes | 255 bytes | 255 bytes | 255 bytes |
-| Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | host test for the CCID message layer; `cycles` on hardware | host tests for NDEF, CRC and the CCID message layer; `cycles` on hardware | 11 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
+| Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 3 host test programs: the CCID message layer, `ident`, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 21 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 13 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware |
 | Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps |
 | Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit |
 
@@ -110,8 +111,9 @@ How to choose:
 ## Supported tags and limits
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
-- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, need an ISO-DEP layer: only `rust/` has one (it identifies the card and passes unauthenticated commands through; file contents need keys).
-- The unit is powered from the Feather's Qwiic 3.3V, or from 5V with the FT232H. Read range was tested only with a tag lying on the unit.
+- Other ISO 14443-A cards are detected (UID, ATQA, SAK) but their content cannot be read. DESFire cards, such as an ORCA card, are identified through an ISO-DEP layer that every folder has (`desfire`), and the four Feather readers pass unauthenticated commands through to them over PC/SC; file contents need keys, which this repo does not have.
+- The unit is powered from the Feather's Qwiic 3.3V, or from 5V with the FT232H. Read range was tested only with a tag or card lying on the unit.
+- Passports were not readable. A US passport (issued 2020, closed and open, four positions, a 3-minute scan) gave no answer on NFC-A, and no answer on NFC-B either, although the reader's antenna measurably coupled to the passport's. No known Type B card was available to check the NFC-B probe (`python/tools/probe_nfc_b.py`), so whether the cause is too little field, a Type B chip, or this passport is open.
 
 ## Getting started
 
@@ -129,6 +131,7 @@ Pick a folder and follow its README: it lists the hardware, the wiring, the setu
 - [Adafruit FT232H breakout](https://shop.adafruit.com/products/2266) for `python/`
 - Adafruit Feather RP2350 (the PSRAM/HSTX model) for `micropython/`, `arduino/`, `tinygo/` and `rust/`
 - NTAG215 tags
+- A MIFARE DESFire card for `desfire` (an ORCA transit card was used)
 
 ## License
 
