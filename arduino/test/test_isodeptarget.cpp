@@ -102,8 +102,16 @@ int main() {
   r = tx(t3, {0x03, 0xF0, 0xDE, 0x00, 0x00, 0x01});
   CHECK(r == V({0x03, 0x00, 0x90, 0x00}));
   CHECK(sniff.apduCount() == 2 && sniff.sessionCount() == 1);
-  // after a refresh (F0 D4) the first busy polls answer busy (01), then idle (00)
-  tx(t3, {0x02, 0xF0, 0xD4, 0x05, 0x80, 0x00});
+  // a refresh (F0 D4) is answered with five S(WTX) requests, then the I-block (same block number)
+  r = tx(t3, {0x02, 0xF0, 0xD4, 0x05, 0x80, 0x00});
+  CHECK(r == V({0xF2, 0x01}));
+  for (int i = 1; i < nfc::SniffApp::kRefreshWtxRequests; i++) {
+    r = tx(t3, {0xF2, 0x01});
+    CHECK(r == V({0xF2, 0x01}));
+  }
+  r = tx(t3, {0xF2, 0x01});
+  CHECK(r == V({0x02, 0x90, 0x00}));
+  // after a refresh the first busy polls answer busy (01), then idle (00)
   for (int i = 0; i < nfc::SniffApp::kBusyPolls; i++) {
     r = tx(t3, {(uint8_t)(0x03 ^ (i & 1)), 0xF0, 0xDE, 0x00, 0x00, 0x01});
     CHECK(r.size() == 4 && r[1] == 0x01);

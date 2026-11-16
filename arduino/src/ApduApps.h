@@ -43,10 +43,20 @@ class SniffApp : public ApduApp {
   // like a real panel that needs a second or two; then "idle" (00).
   static constexpr int kBusyPolls = 3;
 
+  // A real e-paper board answers the refresh command (F0 D4) with S(WTX) "wait longer" requests,
+  // five of them in the Flipper Zero app's model of a Good Display board, then 90 00.
+  static constexpr int kRefreshWtxRequests = 5;
+
   size_t apdu(const uint8_t* cmd, size_t n, uint8_t* resp, size_t cap) override;
+  int takeWtxRequests() override {
+    int w = wtx_;
+    wtx_ = 0;
+    return w;
+  }
   void reset() override {
     sessions_++;
     ndef_.reset();
+    wtx_ = 0;
   }
 
   // The capture is a list of records: [1 = command, 2 = response][length hi][length lo][bytes].
@@ -55,7 +65,7 @@ class SniffApp : public ApduApp {
   size_t apduCount() const { return apdus_; }
   size_t sessionCount() const { return sessions_; }
   bool full() const { return full_; }
-  void clear() { used_ = apdus_ = sessions_ = 0; busyLeft_ = 0; full_ = false; }
+  void clear() { used_ = apdus_ = sessions_ = 0; busyLeft_ = wtx_ = 0; full_ = false; }
 
  private:
   void record(uint8_t kind, const uint8_t* data, size_t n);
@@ -65,6 +75,7 @@ class SniffApp : public ApduApp {
   size_t apdus_ = 0;
   size_t sessions_ = 0;
   int busyLeft_ = 0;
+  int wtx_ = 0;
   bool full_ = false;
 };
 

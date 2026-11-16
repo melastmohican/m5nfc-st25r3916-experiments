@@ -18,6 +18,8 @@ void IsoDepTarget::reset() {
   cmdLen_ = 0;
   lastLen_ = 0;
   lastBn_ = 0;
+  pendingLen_ = 0;
+  wtxTotal_ = wtxSent_ = 0;
   app_.reset();
 }
 
@@ -61,6 +63,16 @@ TargetReply IsoDepTarget::handle(const uint8_t* f, size_t n, uint8_t* out, size_
     memcpy(last_, out, r.len);
     lastLen_ = r.len;
     lastBn_ = bn;
+    int wtx = app_.takeWtxRequests();
+    if (wtx > 0) {  // answer later: ask the reader to wait, send the I-block after its last S(WTX) response
+      memcpy(pending_, out, r.len);
+      pendingLen_ = r.len;
+      wtxTotal_ = wtx;
+      wtxSent_ = 1;
+      out[0] = 0xF2;  // S(WTX) request, WTXM = 1
+      out[1] = 0x01;
+      r.len = 2;
+    }
     return r;
   }
 
@@ -76,6 +88,20 @@ TargetReply IsoDepTarget::handle(const uint8_t* f, size_t n, uint8_t* out, size_
     } else if (lastLen_ && bn == lastBn_) {  // ACK for a block we already sent: repeat it
       memcpy(out, last_, lastLen_);
       r.len = lastLen_;
+    }
+    return r;
+  }
+
+  if ((pcb & 0xF7) == 0xF2 && pendingLen_) {  // S(WTX) response from the reader
+    if (wtxSent_ < wtxTotal_) {
+      wtxSent_++;
+      out[0] = 0xF2;
+      out[1] = 0x01;
+      r.len = 2;
+    } else {  // the wait is over: the delayed answer
+      memcpy(out, pending_, pendingLen_);
+      r.len = pendingLen_;
+      pendingLen_ = 0;
     }
     return r;
   }

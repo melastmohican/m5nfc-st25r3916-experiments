@@ -1,87 +1,134 @@
-# What the Good Display phone app sends to an NFC e-paper board
+# How Good Display's phone apps talk to an NFC e-paper board
 
-Observed on 2026-11-15 with the iOS app NFC-D3-Pro sending a 200x200 black and white image to the
-`arduino/` firmware pretending to be the board (`emulate 600 sniff`, see `arduino/README.md`). The
-board is Good Display's [NFC-D1-0154](https://www.good-display.com/product/390.html) (1.54", FM1280
-chip), which the app is meant to talk to. **Not yet checked against the real board**: the answers
-below are what our fake card gave (`90 00` to everything, `00 90 00` to the busy query), and the app
-accepted them and showed its success check mark.
+Sources, strongest first:
 
-## Conversation
+1. **Traffic.** The iOS app NFC-D3-Pro sending images to the `arduino/` firmware pretending to be the
+   board (`emulate 600 sniff`, see `arduino/README.md`), 2026-11-15. Three panel sizes.
+2. **The Android app's code.** `NFC-D3-Pro.apk` from Good Display, decompiled with JADX (the app was
+   never run). The protocol is in one routine, `writeTag`, and a table class, `data`. The APK and its
+   decompiled source are not in this repo.
+3. **A Flipper Zero app's source**, [RebornedBrain/nfc_eink](https://github.com/RebornedBrain/nfc_eink)
+   (GPL-3.0, so used as a reference only). Points that come only from it are marked *(Flipper)*.
 
-The card is an ISO 14443-4 (ISO-DEP) card. Every command is a short APDU; every answer was `90 00`.
-Class byte `F0` is Good Display's own.
+The board is Good Display's [NFC-D1-0154](https://www.good-display.com/product/390.html) (1.54", FM1280
+chip) or a sibling. **Nothing here has been run against a real board yet**: the answers in our traffic
+are what our fake card gave.
 
-| # | APDU | Meaning |
+## The whole conversation (Android app)
+
+The card is ISO 14443-4 (ISO-DEP). Every command is a short APDU of class `F0`, always sent as 255 bytes
+for image blocks. The Android app opens the connection with a 50 s timeout and then:
+
+| Step | APDU | Meaning |
 |---|---|---|
-| 1 | `00 A4 04 00 07 D2 76 00 00 85 01 01 00` | SELECT the NFC Forum NDEF application. This is iOS: an app may only talk to a card after the system selected one of the application IDs the app declares. |
-| 2 | `F0 DB 02 00 00` | Unknown (no data). Answered `90 00`, the app went on. No PIN was asked for. |
-| 3 | `F0 DB 00 00 62 <98 bytes>` | Screen set-up, a list of tagged entries (see below). |
-| 4 | `F0 DA 00 00 03 F0 12 20` | Unknown, three data bytes. |
-| 5 to 24 | `F0 D2 00 <n> FA <250 bytes>` | **Image data**, `P1` = image index (0), `P2` = packet number 0 to 19, 250 bytes per packet. |
-| 25 | `F0 D4 05 80 00` | **Refresh the screen**: `P1` = 5 (power-on delay 5 x 100 ms), `P2` = `0x80` (bit 7: return at once) with image index 0. |
-| 26 | `F0 DE 00 00 01` | **Read the busy flag**: `00` = idle (we answered idle at once), `01` = still refreshing. |
+| 1 | `F0 DB 02 00 00` | Handshake, no data. The iOS app sends it too, after SELECT of the NDEF application (an iOS requirement). |
+| 2 | `F0 DB 00 00 <len> <entries>` | **Screen set-up** for the chosen panel (see below). The app checks that the answer starts with `90`. |
+| 3 | `F0 DA 00 00 03 F0 <res> <chan>` | Panel type; the two bytes repeat the first two bytes of the `A0` entry. |
+| 4 | `F0 D2 <index> <block> FA <250 bytes>` | **Image data.** `index` 0 is the black/white plane, 1 the red plane of a three-colour panel; `block` counts from 0. The last block is padded to 250 bytes. A 10 ms pause follows the set-up commands, none follows the image blocks. |
+| 5 | `F0 D4 <P1> 80 00` | **Refresh.** `P1` is `05` (power-on delay 5 x 100 ms), or `85` for 4.2" panels and 4-colour panels (bit 7: skip the panel check). `P2 = 80`: return at once. |
+| 6 | | The app **waits**, keeping the connection (and so the reader's field) up, because the chip is powered by the field while the panel redraws. It does not poll anything: fixed times of 2 s for two-colour panels, 16 s for three-colour, 12 s (up to 2.9") or 20 s (larger) for four-colour. During the wait `IsoDep.isConnected()` runs every 100 ms; Android answers that with ISO-DEP presence checks (R-blocks). |
 
-`F0 D2`, `F0 D4` and `F0 DE` are described in Good Display's "FMSC_NFC Protocol" document (the
-command names there are "Load image", "Redraw screen" and "Get EPD busy status"). `F0 DB` and
-`F0 DA` are not in that document.
+The Android app has **no PIN, no authentication and no `F0 DE`**. The iOS app can't send presence checks,
+so after the refresh it polls `F0 DE 00 00 01` (`01` busy, `00` idle) until `00`, then closes its session
+after a 4 s timeout. Good Display's own protocol document ("FMSC_NFC Protocol", listed as
+`DMN037FW_SDK_FMSC_NFC` on [their NFC download page](https://www.good-display.com/companyfile/39/);
+"FMSC" is probably Fudan Micro's NFC shelf-label line, but no page spells it out) describes `F0 D2`, `F0 D4`
+and `F0 DE` and mentions "PIN authentication" as a precondition; no app we looked at does it.
+
+Four-colour panels send `width x height / 4` bytes (2 bits per pixel) as one plane at index 0. A 3.7"
+two-colour panel takes a special path (two planes written one after the other with a different set-up
+helper); details not read.
 
 ## Image format
 
-200 x 200 pixels, 1 bit per pixel, rows of 25 bytes, most significant bit first, **1 = white,
-0 = black**, 5000 bytes in 20 packets. `arduino/tools/gd_image.py` rebuilds the picture from a
-capture. (For a three-colour panel Good Display's document says a second image at index + 1 carries
-the second colour; not seen here.)
+1 bit per pixel, rows of `width / 8` bytes (rounded up), most significant bit first, **1 = white, 0 =
+black**, in blocks of 250 bytes. A 200 x 200 panel needs 5000 bytes (20 blocks). Images are rotated for
+portrait panels. `arduino/tools/gd_image.py` rebuilds the picture from a capture.
 
-## Screen set-up entry (command 3)
+## Panel table
+
+The first entry of the set-up is `A0 06 <res> <chan> <width hi lo> <height hi lo>`. `res` is a panel
+family (controller), not a size; `chan` is `20` for black/white and `30` for black/white/red. The app
+carries 27 variants:
+
+| res | chan | width x height | | res | chan | width x height |
+|---|---|---|---|---|---|---|
+| 00 | 20 | 122 x 250 (2.13") | | 06 | 20 | 152 x 296 |
+| 00 | 20 | 256 x 250 | | 06 | 20 | 304 x 296 |
+| 00 | 30 | 122 x 250 | | 06 | 20 | 352 x 264 |
+| 01 | 20 | 128 x 296 (2.9") | | 06 | 20 | 368 x 360 |
+| 01 | 20 | 256 x 296 | | 06 | 20 | 800 x 300 |
+| 01 | 20 | 336 x 384 | | 06 | 30 | 152 x 296 |
+| 01 | 30 | 128 x 296 | | 07 | 20 | 88 x 184 (0.97") |
+| 03 | 30 | 400 x 300 | | 07 | 20 | 176 x 184 |
+| 04 | 20 | 176 x 264 (2.7") | | 07 | 30 | 88 x 184 |
+| 04 | 30 | 176 x 264 | | 12 | 20 | 152 x 152 |
+| 12 | 20 | 200 x 200 (1.54") | | 12 | 20 | 304 x 152 |
+| 12 | 20 | 400 x 200 | | 12 | 30 | 200 x 200 |
+| 51 | 20 | 240 x 416 (3.71") | | 51 | 20 | 480 x 416 |
+| 51 | 30 | 240 x 416 | | | | |
+
+Seen in traffic: `12` 1.54" (200 x 200), `00` 2.13" (122 x 250, 16 blocks) and `07` 0.97" (88 x 184).
+The Flipper source agrees on `00`, `01`, `12` and `51`.
+
+## The set-up entries
+
+The app builds the `F0 DB` payload from named parts, and they read as commands for an SSD1680/1681-type
+panel controller. Captured 1.54" set-up, with the part names from the app's code:
 
 ```
-A0 06 12 20 00 C8 00 C8
-A4 01 0C   A5 02 00 0A   A4 01 08   A5 02 00 0A   A4 01 0C   A5 02 00 0A   A4 01 02
-A1 01 12   A4 01 02   A1 04 01 C7 00 01   A1 02 11 01   A1 03 44 00 18   A1 05 45 C7 00 00 00
-A1 02 3C 05   A1 02 18 80   A1 02 4E 00   A1 03 4F C7 00
-A3 01 24   A2 02 22 F7   A2 01 20   A4 01 02   A2 02 10 01   A5 02 00 0A
+F0 DB 00 00 62
+A0 06 12 20 00 C8 00 C8                       start: panel type and size
+A4 01 0C  A5 02 00 0A  A4 01 08  A5 02 00 0A  A4 01 0C  A5 02 00 0A  A4 01 02    reset pin sequence and waits
+A1 01 12  A4 01 02                            soft reset, wait
+A1 04 01 C7 00 01                             driver output control (gate count)
+A1 02 11 01                                   data entry mode
+A1 03 44 00 18   A1 05 45 C7 00 00 00         RAM X range (25 bytes) and Y range (200 rows)
+A1 02 3C 05                                   border waveform
+A1 02 18 80                                   temperature sensor
+A1 02 4E 00  A1 03 4F C7 00                   RAM counters
+A3 01 24                                      write black/white RAM
+A2 02 22 F7  A2 01 20  A4 01 02               update sequence, master activation, wait
+A2 02 10 01  A5 02 00 0A                      deep sleep
 ```
 
-Format `tag, length, bytes`. This is my reading, not documented: `A0` holds the panel size
-(`00 C8 00 C8` = 200 x 200), and the `A1`, `A2` and `A3` entries look like the controller commands
-of an SSD1681-type 1.54" panel (`12` software reset, `11` data entry mode, `44` and `45` RAM X and Y
-range for 25 bytes by 200 rows, `3C` border, `18` temperature sensor, `4E` and `4F` RAM counters,
-`24` write black/white RAM, `22 F7` and `20` update sequence and master activation, `10` deep
-sleep). `A4` and `A5` entries look like delays and waits. So the app tells the board how to drive
-its own panel, and only the image bytes and the refresh need to change between pictures.
+`A1` sends a controller command with data, `A2` is a command after the RAM write, `A3` starts the RAM
+write, `A4` and `A5` are pin states, waits and delays (my reading). The payload length and some values
+(`44`, `45`, `4F`, the gate count) change with the panel, and the app has one block per size. The
+Flipper writer sends **one fixed set-up for every panel** and patches only the `A0` entry, and reports
+working with several sizes, so the board probably tolerates a mismatch; not verified.
 
-## Busy polling
+## Before the set-up *(Flipper)*
 
-After `F0 D4` the app asks `F0 DE 00 00 01` again and again until the answer is `00`. In a second run
-the fake card answered `01` (busy) three times and then `00` (idle): the app polled four times, took
-the last `00` as the end, and finished. (In the first run `00` came at once and the app stopped
-after one query.) A real panel is busy for a second or two while it redraws.
-
-## Other panel sizes
-
-The app has one button per panel size, and the set-up entry and the sizes change with it. A run
-with the 0.97" panel sent `F0 DA 00 00 03 F0 07 20` and a set-up of 103 bytes starting
-`A0 06 07 20 00 58 00 B8` (88 x 184 pixels), with the RAM window entries `44 00 0A` (11 bytes per
-row) and `45 27 01 00 00` (296 rows) and 9 image packets, which rebuilt to a 88 x 184 picture
-("0.97 INCH E-PAPER SMILE", drawn rotated). The 1.54" run had `12 20` where this one has `07 20`, in
-both `F0 DA` and the first two bytes of the `A0` entry, so those two bytes look like a panel type
-code (`12` for 1.54", `07` for 0.97").
+The Flipper writer does a longer handshake first: S(DESELECT), SELECT the NDEF application, SELECT the
+capability container `E103` and read 15 bytes, SELECT `E104` and read 2 bytes (expects `00 00 90 00`),
+then two more DESELECTs with the card re-activated each time. The Android app does none of this, so the
+board does not need it. In its model of a board the Flipper answers the refresh with five ISO-DEP S(WTX)
+"wait longer" requests before `90 00`; the `arduino/` sniffer does the same, and the iOS app carries on.
 
 ## Practical notes for sniffing
 
-- Keep the phone still on the unit until the app shows its final message. A first run that sent 8
-  commands and then failed ("tag response error / no response") came from the phone dropping the
-  field mid-transfer.
-- After the app has finished, the iPhone's own background tag reader keeps selecting the NDEF
-  application and reading the capability container. The sniffer answers those as a real Type 4 tag
-  (class `00` commands), otherwise the log fills with repeats.
+- Keep the phone still on the unit until the app shows its final message. A run that sent 8 commands and
+  then failed ("tag response error / no response") came from the phone dropping the field mid-transfer.
+- After the app has finished, the iPhone's own background tag reader keeps selecting the NDEF application
+  and reading the capability container. The sniffer answers those as a real Type 4 tag (class `00`
+  commands), otherwise the log fills with repeats.
 
 ## What is still unknown
 
-- What the real board answers (status words, data in the answer to `F0 DB 02 00 00` or `F0 DE`).
-- What `F0 DB 02 00 00` and `F0 DA` do, and whether a PIN or key check exists on a board that has
-  one set (the protocol document lists the status words `64 5A` "key not initialized" and
-  `69 82` "security status not satisfied").
-- Whether a board needs the set-up entry at all for the same panel, or keeps it in its memory.
-- Whether the iOS-only SELECT in row 1 matters to the real board.
+- What a real board answers (status words, any data in the answers to `F0 DB 02 00 00` and `F0 DB`).
+  The Android app only looks at the first byte of the set-up answer; it ignores the answers to
+  everything else.
+- Whether a board needs the set-up at all for a panel it already knows.
+- How a board that has been locked behaves (the protocol document lists the status words `64 5A` "key not
+  initialized" and `69 82` "security status not satisfied"); the apps never authenticate.
+
+## Related projects
+
+- [RebornedBrain/nfc_eink](https://github.com/RebornedBrain/nfc_eink): Flipper Zero, Good Display and
+  Waveshare, writing and emulating (GPL-3.0).
+- [CompassSecurity/nfcink](https://github.com/CompassSecurity/nfcink): Python over PC/SC for a
+  different, 4-colour 240 x 416 badge from the same command family (`F0 D2` raw upload, `F0 D3`
+  LZO-compressed upload, a refresh `F0 D4 85 00 00` that takes about 15 s). No licence stated.
+- [joshuatz/nfc-epaper-writer](https://github.com/joshuatz/nfc-epaper-writer): Android, Waveshare boards
+  through Waveshare's closed SDK (MIT). No protocol detail.

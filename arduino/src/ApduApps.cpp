@@ -108,7 +108,10 @@ size_t SniffApp::apdu(const uint8_t* c, size_t n, uint8_t* resp, size_t cap) {
     record(2, resp, rl);
     return rl;
   }
-  if (n >= 4 && c[0] == 0xF0 && c[1] == 0xD4) busyLeft_ = kBusyPolls;  // screen refresh starts
+  if (n >= 4 && c[0] == 0xF0 && c[1] == 0xD4) {  // screen refresh starts
+    busyLeft_ = kBusyPolls;
+    wtx_ = kRefreshWtxRequests;
+  }
   if (n >= 4 && c[0] == 0xF0 && c[1] == 0xDE) {  // vendor "get busy": 01 busy, 00 idle
     resp[0] = busyLeft_ > 0 ? 0x01 : 0x00;
     if (busyLeft_ > 0) busyLeft_--;

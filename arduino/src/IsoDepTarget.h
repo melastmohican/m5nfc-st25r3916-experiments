@@ -18,6 +18,9 @@ class ApduApp {
   virtual ~ApduApp() {}
   virtual size_t apdu(const uint8_t* cmd, size_t n, uint8_t* resp, size_t cap) = 0;
   virtual void reset() {}  // a new ISO-DEP session starts (RATS)
+  // After apdu(): how many S(WTX) "wait longer" requests to send before the answer, for a command
+  // that takes a while (a screen refresh). 0 = answer at once. Read once per command.
+  virtual int takeWtxRequests() { return 0; }
 };
 
 class IsoDepTarget : public Target {
@@ -42,6 +45,11 @@ class IsoDepTarget : public Target {
   uint8_t last_[kMaxResponse + 3];  // last I-block sent, for retransmission after an R(NAK)
   size_t lastLen_ = 0;
   uint8_t lastBn_ = 0;
+  // a delayed answer: S(WTX) requests go out first, the I-block follows the last WTX response
+  uint8_t pending_[kMaxResponse + 3];
+  size_t pendingLen_ = 0;
+  int wtxTotal_ = 0;
+  int wtxSent_ = 0;
 };
 
 }  // namespace nfc
