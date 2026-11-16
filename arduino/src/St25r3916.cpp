@@ -162,6 +162,29 @@ size_t St25r3916::fifoCount() {
   return s[0] | ((size_t)(s[1] & 0xC0) << 2);
 }
 
+size_t St25r3916::readFifo(uint8_t* out, size_t n) {
+  size_t got = 0;
+  while (got < n) {
+    size_t chunk = n - got > 64 ? 64 : n - got;
+    uint8_t op = OP_FIFO_READ;
+    if (!t_.exchange(&op, 1, out + got, chunk)) {
+      ioError_ = true;
+      break;
+    }
+    got += chunk;
+  }
+  return got;
+}
+void St25r3916::writePtMemoryA(const uint8_t* data, size_t len) {
+  uint8_t b[17];
+  if (len > sizeof(b) - 1) {
+    ioError_ = true;
+    return;
+  }
+  b[0] = 0xA0;  // load PT memory A config
+  for (size_t i = 0; i < len; i++) b[1 + i] = data[i];
+  if (!t_.write(b, 1 + len)) ioError_ = true;
+}
 uint32_t St25r3916::readIrqs() {
   uint8_t r[4];
   readRegs(REG_IRQ_MAIN, r, 4);

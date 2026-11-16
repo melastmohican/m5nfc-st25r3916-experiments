@@ -93,11 +93,16 @@ class St25r3916 {
   // true if any I2C transfer failed since the last call (cleared by the call)
   bool takeIoError();
 
- private:
+  // ---- FIFO, interrupts and passive target memory (also used by the tag emulation, Listener.h)
   void loadFifo(const uint8_t* data, size_t len);
-  size_t fifoCount();
-  uint32_t readIrqs();
-  void writeMask(uint32_t value);
+  size_t fifoCount();                        // bytes in the FIFO; fifoStatus2() has the partial-byte bits
+  size_t readFifo(uint8_t* out, size_t n);   // drains n bytes, returns how many were read
+  uint32_t readIrqs();                       // main | timer<<8 | error<<16 | passive target<<24; clears them
+  void writeMask(uint32_t value);            // NOTE: main interrupt mask in the top byte (reverse of readIrqs)
+  void writePtMemoryA(const uint8_t* data, size_t len);  // passive target memory: UID(10) ATQA(2) SAK(3)
+  uint8_t fifoStatus2() const { return fifoStatus2_; }
+
+ private:
   int enableOscillator();
   int configureNfca();
   void setRxCrc(bool check);

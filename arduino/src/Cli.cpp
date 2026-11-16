@@ -9,6 +9,7 @@
 namespace nfc {
 
 namespace {
+const uint8_t kEmuUid[7] = {0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66};
 // Big buffers are static to keep them off the stack.
 uint8_t userBuf[USER_READ_BYTES];
 uint8_t dumpBuf[DUMP_BYTES];
@@ -51,6 +52,8 @@ bool parseHex4(const char* s, uint8_t out[4]) {
 }
 }  // namespace
 
+Cli::Cli(Stream& io, St25r3916& rf) : io_(io), rf_(rf), tag_(rf), emuTag_(kEmuUid), listener_(rf, emuTag_) {}
+
 void Cli::poll() {
   while (io_.available()) {
     char c = io_.read();
@@ -68,7 +71,7 @@ void Cli::poll() {
 
 void Cli::help() {
   io_.println("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |");
-  io_.println("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help");
+  io_.println("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] | emu-dump | help");
 }
 
 int Cli::select(Card& card) { return selectCard(rf_, card); }
@@ -88,6 +91,8 @@ void Cli::run(char* line) {
   else if (!strcmp(cmd, "ident")) rc = cmdIdent();
   else if (!strcmp(cmd, "desfire")) rc = cmdDesfire();
   else if (!strcmp(cmd, "cycles")) rc = cmdCycles(argc, argv);
+  else if (!strcmp(cmd, "emulate")) rc = cmdEmulate(argc, argv);
+  else if (!strcmp(cmd, "emu-dump")) rc = cmdEmuDump();
   else if (!strcmp(cmd, "help")) { help(); rc = OK; }
   else { io_.printf("unknown command: %s\n", cmd); help(); rc = ERR_PARAM; }
   if (rc == OK) io_.println("ok");
@@ -315,6 +320,58 @@ int Cli::cmdCycles(int argc, char** argv) {
   if (mismatches) io_.printf("  %d dump mismatch(es)\n", mismatches);
   if (errors) io_.printf("  %d error(s), last: %s\n", errors, statusName(lastErr));
   return ok == n ? OK : ERR_BAD_RESPONSE;
+}
+
+
+// Act as a Type 2 tag. No serial output while it runs: a reader gives a tag about 5 ms to answer.
+int Cli::cmdEmulate(int argc, char** argv) {
+  int seconds = argc > 1 ? atoi(argv[1]) : 30;
+  if (seconds < 1 || seconds > 600) return ERR_PARAM;
+  int rc = listener_.start(kEmuUid);
+  if (rc != OK) return rc;
+  io_.printf("emulating an NTAG215, UID 04112233445566, for %d s: hold the phone to the unit (any byte ends it)\n", seconds);
+  uint32_t t0 = millis();
+  uint32_t spins = 0;
+  while (millis() - t0 < (uint32_t)seconds * 1000) {
+    listener_.poll();
+    if ((++spins & 0x3F) == 0 && io_.available()) {  // any byte on the serial port ends it
+      io_.read();
+      break;
+    }
+  }
+  rc = listener_.stop();
+  listener_.printLog(io_);
+  io_.printf("fields seen: %u, frames answered: %u, tag writes: %u\n", (unsigned)listener_.fieldCount(),
+             (unsigned)listener_.frameCount(), (unsigned)emuTag_.writeCount());
+  return rc;
+}
+
+// The emulated memory in the format of `dump`, then the NDEF message in it.
+int Cli::cmdEmuDump() {
+  const uint8_t* mem = emuTag_.memory();
+  for (size_t page = 0; page < Type2Tag::PAGES; page++) {
+    const uint8_t* c = mem + page * 4;
+    char text[5];
+    for (int i = 0; i < 4; i++) text[i] = (c[i] >= 32 && c[i] < 127) ? c[i] : '.';
+    text[4] = 0;
+    io_.printf("%3u  %02X %02X %02X %02X  %s%s\n", (unsigned)page, c[0], c[1], c[2], c[3], text,
+               emuTag_.changed(page) ? "  (written)" : "");
+  }
+  const uint8_t* msg;
+  size_t msgLen;
+  if (!ndef::findMessage(mem + 16, Type2Tag::BYTES - 16, &msg, &msgLen) || msgLen == 0) {
+    io_.println("no NDEF message");
+    return OK;
+  }
+  ndef::Record recs[4];
+  int n = ndef::decodeMessage(msg, msgLen, recs, 4);
+  if (n < 0) return ERR_NDEF;
+  char text[120];
+  for (int i = 0; i < n; i++) {
+    ndef::describe(recs[i], text, sizeof(text));
+    io_.println(text);
+  }
+  return OK;
 }
 
 }  // namespace nfc

@@ -87,6 +87,8 @@ Open the Feather's USB serial port at 115200 baud (`pio device monitor`, or any 
 | `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |
 | `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. `detect` points ISO-DEP cards to it. |
 | `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. |
+| `emulate [S]` | Acts as an NTAG215 tag (UID `04112233445566`) for S seconds (default 30) or until any byte arrives on the serial port, then prints the event log and a summary. See "Acting as a tag". |
+| `emu-dump` | Prints the emulated tag's memory in the `dump` format (pages a reader wrote are marked `(written)`), then the decoded NDEF message. |
 | `help` | Lists the commands. |
 
 ```
@@ -101,6 +103,21 @@ Pages outside the user memory (4 to 129), such as the UID, lock bytes, capabilit
 
 A full dump takes about 180 ms (`cycles` reports it). The serial commands and the PC/SC reader share the chip: a long command such as `cycles` delays PC/SC answers while it runs.
 
+### Acting as a tag (card emulation)
+
+The ST25R3916 can also be the tag. `emulate` makes the unit answer like an NTAG215 so a phone can read it and write NDEF to it: the chip handles anticollision by itself and the firmware answers the Type 2 commands (`READ`, `FAST_READ`, `WRITE`, `GET_VERSION`, `READ_SIG`, `HLTA`) from a 540-byte memory.
+
+```
+uv run --with pyserial python tools/emulate.py --out capture
+```
+
+The script starts `emulate`, then waits. Hold the phone to the unit and write a tag with NFC Tools (Write, Add a record, Text, Write). Press Enter in the terminal when the phone shows the check mark. It saves `capture.bin` (the 540 bytes) and `capture.txt` (the event log, the memory and the decoded NDEF). Checked with an iPhone and NFC Tools: the phone identifies the tag as an NTAG215 with serial number `04:11:22:33:44:55:66`, writes a text record, and `emu-dump` shows `text[en]: Hello from iPhone`.
+
+- **Only while `emulate` runs is the field off.** Otherwise the PC/SC reader checks for a card every 300 ms and switches the reader field on, and an iPhone near a reader field opens Wallet. Start `emulate` before you bring the phone close.
+- **Nothing prints while it runs.** A reader gives a tag about 5 ms to answer and a serial write can take longer, so events go to a 256-entry log that is printed when the run ends. A long session drops the oldest events.
+- **Everything is answered from RAM.** The memory resets at power-up. Pages 0 to 2 (UID, lock bytes) are not writable, as on a real tag.
+- Ported from [M5Unit-NFC](https://github.com/m5stack/M5Unit-NFC)'s MIT-licensed emulation layer (`src/nfc/layer/a/emulation_layer_a_ST25R3916.cpp`).
+
 ## Source layout (`src/`)
 
 | File | Role |
@@ -112,6 +129,8 @@ A full dump takes about 180 ms (`cycles` reports it). The serial commands and th
 | `Ntag215.h/.cpp` | The tag's memory model: 135 pages, write guards with read-back verify, NDEF read and write. |
 | `Ndef.h/.cpp` | NDEF text and URI records and the TLV wrapper. No heap: callers provide the buffers. |
 | `WireTransport.h` | The Arduino `Wire` transport. |
+| `Type2Tag.h/.cpp` | An NTAG215-like tag in RAM: handles one Type 2 command and says what to reply. No hardware, host-tested. |
+| `Listener.h/.cpp` | NFC-A target mode on the chip (the state machine ported from M5Unit-NFC) driving a `Type2Tag`, with a small event log. |
 | `Cli.h/.cpp` | The serial command line. |
 | `CcidProto.h/.cpp` | CCID message handling: slot status, power on and off, transfer blocks, parameters. Plain C++ with no Arduino dependency. |
 | `NfcBackend.h/.cpp` | Maps the pseudo-APDUs above onto the tag. |
@@ -139,7 +158,7 @@ TinyUSB has no CCID class, so `CcidDriver.cpp` adds one:
 On the Mac, no hardware needed:
 
 ```
-./test/run.sh          # CCID message layer: builds test/test_ccid_proto.cpp with the system C++ compiler
+./test/run.sh          # builds and runs the host tests with the system C++ compiler: CCID message layer, ident, ISO-DEP framing and the Type 2 tag model
 ```
 
 With the board flashed and a tag on the unit, use the PC/SC scripts in [`../micropython`](../micropython), which work with either reader (run each as `uv run --with pyscard python <script>`):
