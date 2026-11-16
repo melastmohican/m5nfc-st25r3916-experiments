@@ -2,8 +2,9 @@
 //   chip | detect | dump | read-ndef
 //   write-ndef [--text "..."] [--lang en] [--uri https://...]
 //   write-page <page> <8 hex digits> [--force]
-//   emulate [S]     act as an NFC-A tag (UID 04112233445566, NTAG215 memory) for S seconds (default 30) or
-//                   until any byte arrives on the serial port,
+//   emulate [S] [t2|t4|sniff]   act as an NFC-A tag (UID 04112233445566) for S seconds (default 30)
+//                   or until any byte arrives on the serial port: t2 = NTAG215 (default), t4 = NFC Forum
+//                   Type 4 NDEF tag (ISO-DEP), sniff = ISO-DEP card that logs every APDU and answers 90 00,
 //                   then print the event log and the memory the reader wrote; emu-dump prints it again
 //   cycles [N]      N x (select + full dump, compared with the first dump); default 50
 //   help
@@ -11,6 +12,8 @@
 #pragma once
 #include <Arduino.h>
 
+#include "ApduApps.h"
+#include "IsoDepTarget.h"
 #include "Listener.h"
 #include "Ntag215.h"
 #include "Type2Tag.h"
@@ -39,6 +42,7 @@ class Cli {
   int cmdCycles(int argc, char** argv);
   int cmdEmulate(int argc, char** argv);
   int cmdEmuDump();
+  void dumpApdus();
   void help();
   int select(Card& card);
 
@@ -46,7 +50,12 @@ class Cli {
   St25r3916& rf_;
   Ntag215 tag_;
   Type2Tag emuTag_;
+  Type4NdefApp t4App_;
+  IsoDepTarget t4Target_;
+  SniffApp sniffApp_;
+  IsoDepTarget sniffTarget_;
   Listener listener_;
+  enum EmuMode : uint8_t { EMU_NONE, EMU_T2, EMU_T4, EMU_SNIFF } emuMode_ = EMU_NONE;
   char line_[LINE_MAX];
   size_t len_ = 0;
 };

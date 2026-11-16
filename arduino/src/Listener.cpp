@@ -188,6 +188,7 @@ int Listener::stop() {
 void Listener::gotoOff() {
   logState(OFF);
   state_ = OFF;
+  target_->reset();
   wakeup_ = false;
   bitrate_ = -1;
   rf_.command(CMD_STOP);
@@ -333,7 +334,7 @@ void Listener::pollActive() {
   if (!got) return;
   if (got & I_EOF) return gotoOff();
   got |= irq(I_PAR | I_CRC | I_ERR2 | I_ERR1);
-  uint8_t raw[64];
+  uint8_t raw[272];  // up to a 256-byte ISO-DEP frame
   size_t n;
   readFrame(raw, sizeof(raw), &n);
   if ((got & I_ERRORS) || n <= 2) {
@@ -344,8 +345,8 @@ void Listener::pollActive() {
   }
   n -= 2;  // CRC_A stays in the FIFO
   frames_++;
-  uint8_t reply[64];
-  Type2Tag::Reply r = tag_.handle(raw, n, reply, sizeof(reply));
+  uint8_t reply[272];
+  TargetReply r = target_->handle(raw, n, reply, sizeof(reply));
   if (r.len || r.ack4) transmit(r, reply);  // answer first, log afterwards
   log(EV_RX, raw, n);
   if (r.halt) {
@@ -354,7 +355,7 @@ void Listener::pollActive() {
   }
 }
 
-void Listener::transmit(const Type2Tag::Reply& r, const uint8_t* data) {
+void Listener::transmit(const TargetReply& r, const uint8_t* data) {
   rf_.command(CMD_CLEAR_FIFO);
   if (r.ack4) {  // 4-bit ACK/NAK frame, no CRC
     rf_.loadFifo(&r.nibble, 1);

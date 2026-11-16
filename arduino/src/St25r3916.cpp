@@ -145,7 +145,7 @@ void St25r3916::command(uint8_t cmd, const uint8_t* payload, size_t len, uint32_
 }
 
 void St25r3916::loadFifo(const uint8_t* data, size_t len) {
-  uint8_t b[65];
+  uint8_t b[257];  // an ISO-DEP reply can be up to 256 bytes; Wire holds 256 per transfer
   if (len > sizeof(b) - 1) {
     ioError_ = true;
     return;

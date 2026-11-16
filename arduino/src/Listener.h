@@ -13,13 +13,14 @@
 #include <Arduino.h>
 
 #include "St25r3916.h"
-#include "Type2Tag.h"
+#include "Target.h"
 
 namespace nfc {
 
 class Listener {
  public:
-  Listener(St25r3916& rf, Type2Tag& tag) : rf_(rf), tag_(tag) {}
+  Listener(St25r3916& rf, Target& target) : rf_(rf), target_(&target) {}
+  void setTarget(Target& target) { target_ = &target; }
 
   // Puts the chip in target mode with the given 7-byte UID. Returns a Status.
   int start(const uint8_t uid[7], uint16_t atqa = 0x0044, uint8_t sak = 0x00);
@@ -59,10 +60,10 @@ class Listener {
   void pollHalt();
   void readBitrate();
   bool readFrame(uint8_t* out, size_t cap, size_t* n);
-  void transmit(const Type2Tag::Reply& r, const uint8_t* data);
+  void transmit(const TargetReply& r, const uint8_t* data);
 
   St25r3916& rf_;
-  Type2Tag& tag_;
+  Target* target_;
   State state_ = OFF;
   bool wakeup_ = false;
   int8_t bitrate_ = -1;  // 0 = 106 kbit/s, -1 unknown

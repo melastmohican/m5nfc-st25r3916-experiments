@@ -52,7 +52,7 @@ bool parseHex4(const char* s, uint8_t out[4]) {
 }
 }  // namespace
 
-Cli::Cli(Stream& io, St25r3916& rf) : io_(io), rf_(rf), tag_(rf), emuTag_(kEmuUid), listener_(rf, emuTag_) {}
+Cli::Cli(Stream& io, St25r3916& rf) : io_(io), rf_(rf), tag_(rf), emuTag_(kEmuUid), t4Target_(t4App_), sniffTarget_(sniffApp_), listener_(rf, emuTag_) {}
 
 void Cli::poll() {
   while (io_.available()) {
@@ -71,7 +71,7 @@ void Cli::poll() {
 
 void Cli::help() {
   io_.println("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |");
-  io_.println("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] | emu-dump | help");
+  io_.println("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] [t2|t4|sniff] | emu-dump | help");
 }
 
 int Cli::select(Card& card) { return selectCard(rf_, card); }
@@ -323,13 +323,36 @@ int Cli::cmdCycles(int argc, char** argv) {
 }
 
 
-// Act as a Type 2 tag. No serial output while it runs: a reader gives a tag about 5 ms to answer.
+// Act as a tag. No serial output while it runs: a reader gives a tag about 5 ms to answer.
 int Cli::cmdEmulate(int argc, char** argv) {
-  int seconds = argc > 1 ? atoi(argv[1]) : 30;
+  int seconds = 30;
+  EmuMode mode = EMU_T2;
+  for (int i = 1; i < argc; i++) {
+    if (!strcmp(argv[i], "t2")) mode = EMU_T2;
+    else if (!strcmp(argv[i], "t4")) mode = EMU_T4;
+    else if (!strcmp(argv[i], "sniff")) mode = EMU_SNIFF;
+    else seconds = atoi(argv[i]);
+  }
   if (seconds < 1 || seconds > 600) return ERR_PARAM;
-  int rc = listener_.start(kEmuUid);
+  uint8_t sak = 0x00;
+  const char* what = "an NTAG215";
+  if (mode == EMU_T2) {
+    listener_.setTarget(emuTag_);
+  } else if (mode == EMU_T4) {
+    listener_.setTarget(t4Target_);
+    sak = 0x20;  // ISO-DEP: the reader sends RATS
+    what = "a Type 4 NDEF tag";
+  } else {
+    listener_.setTarget(sniffTarget_);
+    sniffApp_.clear();
+    sak = 0x20;
+    what = "an ISO-DEP card that logs every APDU";
+  }
+  int rc = listener_.start(kEmuUid, 0x0044, sak);
   if (rc != OK) return rc;
-  io_.printf("emulating an NTAG215, UID 04112233445566, for %d s: hold the phone to the unit (any byte ends it)\n", seconds);
+  emuMode_ = mode;
+  io_.printf("emulating %s, UID 04112233445566, for %d s: hold the phone to the unit (any byte ends it)\n", what,
+             seconds);
   uint32_t t0 = millis();
   uint32_t spins = 0;
   while (millis() - t0 < (uint32_t)seconds * 1000) {
@@ -341,27 +364,55 @@ int Cli::cmdEmulate(int argc, char** argv) {
   }
   rc = listener_.stop();
   listener_.printLog(io_);
-  io_.printf("fields seen: %u, frames answered: %u, tag writes: %u\n", (unsigned)listener_.fieldCount(),
-             (unsigned)listener_.frameCount(), (unsigned)emuTag_.writeCount());
+  io_.printf("fields seen: %u, frames answered: %u", (unsigned)listener_.fieldCount(), (unsigned)listener_.frameCount());
+  if (mode == EMU_T2) io_.printf(", tag writes: %u", (unsigned)emuTag_.writeCount());
+  if (mode == EMU_T4) io_.printf(", NDEF file updates: %u", (unsigned)t4App_.updateCount());
+  if (mode == EMU_SNIFF) io_.printf(", APDUs: %u, sessions: %u", (unsigned)sniffApp_.apduCount(), (unsigned)sniffApp_.sessionCount());
+  io_.println();
   return rc;
 }
 
-// The emulated memory in the format of `dump`, then the NDEF message in it.
+// What the last `emulate` run captured: the NTAG215 memory in the format of `dump` (t2), the NDEF
+// file (t4) or every APDU in full (sniff).
 int Cli::cmdEmuDump() {
-  const uint8_t* mem = emuTag_.memory();
-  for (size_t page = 0; page < Type2Tag::PAGES; page++) {
-    const uint8_t* c = mem + page * 4;
-    char text[5];
-    for (int i = 0; i < 4; i++) text[i] = (c[i] >= 32 && c[i] < 127) ? c[i] : '.';
-    text[4] = 0;
-    io_.printf("%3u  %02X %02X %02X %02X  %s%s\n", (unsigned)page, c[0], c[1], c[2], c[3], text,
-               emuTag_.changed(page) ? "  (written)" : "");
-  }
-  const uint8_t* msg;
-  size_t msgLen;
-  if (!ndef::findMessage(mem + 16, Type2Tag::BYTES - 16, &msg, &msgLen) || msgLen == 0) {
-    io_.println("no NDEF message");
+  if (emuMode_ == EMU_SNIFF) {
+    dumpApdus();
     return OK;
+  }
+  const uint8_t* mem;
+  size_t total;
+  const uint8_t* msg = nullptr;
+  size_t msgLen = 0;
+  if (emuMode_ == EMU_T4) {
+    const uint8_t* f = t4App_.ndefFile();
+    size_t nlen = (size_t)f[0] << 8 | f[1];
+    io_.printf("NDEF file: NLEN = %u, %u update(s)\n", (unsigned)nlen, (unsigned)t4App_.updateCount());
+    if (nlen == 0 || nlen > Type4NdefApp::NDEF_FILE_SIZE - 2) {
+      io_.println("no NDEF message");
+      return OK;
+    }
+    for (size_t i = 0; i < nlen + 2; i += 16) {
+      io_.printf("%04X ", (unsigned)i);
+      for (size_t j = i; j < i + 16 && j < nlen + 2; j++) io_.printf(" %02X", f[j]);
+      io_.println();
+    }
+    msg = f + 2;
+    msgLen = nlen;
+  } else {
+    mem = emuTag_.memory();
+    total = Type2Tag::PAGES;
+    for (size_t page = 0; page < total; page++) {
+      const uint8_t* c = mem + page * 4;
+      char text[5];
+      for (int i = 0; i < 4; i++) text[i] = (c[i] >= 32 && c[i] < 127) ? c[i] : '.';
+      text[4] = 0;
+      io_.printf("%3u  %02X %02X %02X %02X  %s%s\n", (unsigned)page, c[0], c[1], c[2], c[3], text,
+                 emuTag_.changed(page) ? "  (written)" : "");
+    }
+    if (!ndef::findMessage(mem + 16, Type2Tag::BYTES - 16, &msg, &msgLen) || msgLen == 0) {
+      io_.println("no NDEF message");
+      return OK;
+    }
   }
   ndef::Record recs[4];
   int n = ndef::decodeMessage(msg, msgLen, recs, 4);
@@ -372,6 +423,21 @@ int Cli::cmdEmuDump() {
     io_.println(text);
   }
   return OK;
+}
+
+// "C> <hex>" for a command the reader sent, "R> <hex>" for our answer, one APDU per line.
+void Cli::dumpApdus() {
+  const uint8_t* p = sniffApp_.capture();
+  const uint8_t* end = p + sniffApp_.captureSize();
+  io_.printf("APDUs captured: %u in %u session(s)%s\n", (unsigned)sniffApp_.apduCount(),
+             (unsigned)sniffApp_.sessionCount(), sniffApp_.full() ? " (capture buffer full, later APDUs lost)" : "");
+  while (p + 3 <= end) {
+    size_t len = (size_t)p[1] << 8 | p[2];
+    io_.print(p[0] == 1 ? "C>" : "R>");
+    for (size_t i = 0; i < len; i++) io_.printf(" %02X", p[3 + i]);
+    io_.println();
+    p += 3 + len;
+  }
 }
 
 }  // namespace nfc

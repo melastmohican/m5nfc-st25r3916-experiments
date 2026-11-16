@@ -13,25 +13,22 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "Target.h"
+
 namespace nfc {
 
-class Type2Tag {
+class Type2Tag : public Target {
  public:
   static constexpr size_t PAGES = 135;  // NTAG215
   static constexpr size_t BYTES = PAGES * 4;
 
-  struct Reply {
-    size_t len = 0;       // reply bytes (CRC is added by the chip); 0 with ack4 == false: no reply
-    bool ack4 = false;    // send the 4-bit frame `nibble` instead (ACK = 0xA, NAK = 0x0)
-    uint8_t nibble = 0;
-    bool halt = false;    // the reader sent HLTA
-  };
+  using Reply = TargetReply;
 
   // 7-byte UID (BCC bytes are computed), capability container E1 10 3E 00, empty NDEF message.
   explicit Type2Tag(const uint8_t uid[7]);
 
   // Fills `out` and returns it. `cap` must be at least 64.
-  Reply handle(const uint8_t* frame, size_t n, uint8_t* out, size_t cap);
+  Reply handle(const uint8_t* frame, size_t n, uint8_t* out, size_t cap) override;
 
   const uint8_t* memory() const { return mem_; }
   size_t writeCount() const { return writes_; }

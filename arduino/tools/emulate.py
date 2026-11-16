@@ -6,8 +6,9 @@ Starts `emulate` on the Feather, then waits. Hold a phone to the unit and write 
 (or any app). Press Enter here when the phone is done (or wait for the timeout): the script ends the
 emulation, reads the event log and the emulated memory back, and writes
 
-    <out>.bin    the 540 bytes of tag memory
+    <out>.bin    the 540 bytes of tag memory (mode t2 only)
     <out>.txt    the event log, the memory in `dump` format and the decoded NDEF message
+                 (mode t4: the NDEF file; mode sniff: every APDU, C> command / R> answer)
 """
 import argparse
 import glob
@@ -35,6 +36,8 @@ def main() -> int:
     ap.add_argument("--port", default=None)
     ap.add_argument("--seconds", type=int, default=300)
     ap.add_argument("--out", default="capture")
+    ap.add_argument("--mode", choices=["t2", "t4", "sniff"], default="t2",
+                    help="t2: NTAG215 (saves capture.bin), t4: Type 4 NDEF tag, sniff: log every APDU")
     ap.add_argument("--stop-file", default=None, help="also stop when this file appears (for scripts)")
     args = ap.parse_args()
     port = args.port or (sorted(glob.glob("/dev/cu.usbmodem*")) or [None])[0]
@@ -45,7 +48,7 @@ def main() -> int:
     ser.dtr = True
     time.sleep(0.3)
     ser.reset_input_buffer()
-    ser.write(f"emulate {args.seconds}\n".encode())
+    ser.write(f"emulate {args.seconds} {args.mode}\n".encode())
     time.sleep(0.5)
     first = ser.read(512).decode(errors="replace")
     if "emulating" not in first:
@@ -71,6 +74,13 @@ def main() -> int:
 
     mem = bytearray(540)
     seen = 0
+    if args.mode != "t2":
+        with open(args.out + ".txt", "w") as f:
+            f.write("== event log ==\n" + log.strip() + "\n\n== capture ==\n" + dump.strip() + "\n")
+        print(f"saved {args.out}.txt")
+        for l in dump.splitlines():
+            print(l)
+        return 0
     for line in dump.splitlines():
         m = re.match(r"^\s*(\d+)\s+((?:[0-9A-F]{2} ){3}[0-9A-F]{2})", line)
         if m and int(m.group(1)) < 135:
