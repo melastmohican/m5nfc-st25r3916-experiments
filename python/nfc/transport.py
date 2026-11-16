@@ -15,6 +15,9 @@ class FtdiTransport:
 
         self._ctrl = I2cController()
         self._ctrl.configure(url, frequency=freq)
+        # The FTDI latency timer defaults to 16 ms, and every I2C operation waits for one tick.
+        # At 1 ms a register read takes about 1 ms instead of 18 ms, and a full dump 0.5 s instead of 7 s.
+        self._ctrl.ftdi.set_latency_timer(1)
         self._port = self._ctrl.get_port(addr)
 
     def write(self, data: bytes) -> None:

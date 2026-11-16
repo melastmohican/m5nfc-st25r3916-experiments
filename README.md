@@ -98,7 +98,7 @@ The code after `FF` is the native command code. Status words: `6A 82` a read bey
 | Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
 | Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles` | the shared pseudo-APDUs (`FF CA`, `FF B0`, `FF D6`, `FF 60/3C/39`, ISO-DEP pass-through) and the same serial commands as `python/` | the same | the same | the same | the same |
 | Live card insert and remove events | no | yes | yes | yes | yes | yes |
-| Full 135-page dump | about 7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms | about 162 ms |
+| Full 135-page dump | about 0.7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms | about 162 ms |
 | Longest read per command | n/a | 255 bytes | 255 bytes | 255 bytes | 255 bytes | 255 bytes |
 | Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 3 host test programs: the CCID message layer, `ident`, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 21 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 13 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware | 3 host test programs (the same as `arduino/`); `cycles` on hardware |
 | Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 cycles |

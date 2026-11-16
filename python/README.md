@@ -58,7 +58,7 @@ uv run python -m nfc.cli <command>
 | `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
 | `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |
 | `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. `detect` points ISO-DEP cards to it. |
-| `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. A full dump takes about 7 s here, so 50 cycles take about 6 minutes. |
+| `cycles [N]` | Runs N (default 50) rounds of select and full dump and compares each dump with the first. A full dump takes about 0.7 s here, so 50 cycles take about 40 seconds. |
 
 Options before the command: `--freq` sets the I2C clock in Hz (default 100000) and `--url` sets the pyftdi device URL (default `ftdi://ftdi:232h/1`).
 
@@ -86,7 +86,8 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
 - `detect` identifies any ISO 14443-A card by UID, ATQA and SAK, but cannot read the content of other card types. DESFire cards (SAK `0x20`, for example an ORCA card) can be identified with `desfire` (ATS, version, application IDs; no keys, so no file contents).
-- A full 135-page dump takes about 7 seconds, because every I2C transfer goes through USB.
+- A full 135-page dump takes about 0.7 seconds (select and dump alone about 0.5 s). It took 7 s until the FTDI latency timer was lowered from its 16 ms default to 1 ms in `nfc/transport.py`: every I2C operation waits for one timer tick, about 1 ms now instead of 18 ms. It is still slower than the Feather folders because every I2C transfer goes through USB.
+- Each command takes about 5 s longer to exit, because closing the FTDI device (`pyftdi`) is slow. The cause is not found.
 
 ## Diagnostics
 
