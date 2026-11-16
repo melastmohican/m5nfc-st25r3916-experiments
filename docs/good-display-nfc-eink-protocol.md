@@ -218,6 +218,32 @@ board does not need it. In its model of a board the Flipper answers the refresh 
   and reading the capability container. The sniffer answers those as a real Type 4 tag (class `00`
   commands), otherwise the log fills with repeats.
 
+## Comparison with the Flipper writer
+
+The Flipper Zero app ([RebornedBrain/nfc_eink](https://github.com/RebornedBrain/nfc_eink), GPL-3.0,
+read for comparison only) sends the same commands as the apps: `F0 DB 02`, the `F0 DB` set-up, `F0 DA 03
+F0 <res> <chan>`, `F0 D2` blocks of 250 bytes and `F0 D4`. It differs in these ways:
+
+| Point | Apps (iOS captures, Android code) | Flipper |
+|---|---|---|
+| Refresh | `P1 = 05`; `85` for 4-colour and 4.2" | always `F0 D4 05 80 00` |
+| Block number | Android: P1 = plane, P2 = block | one 16-bit block number in P1/P2 |
+| Waiting | Android: ISO-DEP presence checks; iOS: `F0 DE` polls | ISO-DEP presence checks, no `F0 DE` |
+| Set-up | one script per panel and colour type | one fixed SSD1680-style script, only the `A0` entry patched |
+| Panels | 27 variants, mono, 3-colour and 4-colour | four mono panels: 1.54" GDEY0154D67, 2.13" GDEY0213B74, 2.9" GDEY029T94, 3.7" GDEY037T03 |
+| Opening | Android none; iOS SELECT of the NDEF app | DESELECT, SELECT NDEF app, reads of `E103` and `E104` first |
+
+- The Flipper's four panels match the monochrome part numbers on the board pages (NFC-D1-0154 lists
+  GDEY0154D67, NFC-D3-0213 lists GDEY0213B74, NFC-D3-029 lists GDEY029T94 and GDEY037T03). The
+  monochrome path is therefore the best-proven one; the JD and 3-colour scripts have only the apps behind
+  them.
+- The fixed script has 2.9"-style RAM windows (`44 00 0F`, gate count `01 27`), yet the Flipper sends it
+  to 1.54" and 3.7" panels too. If that works on a board, the board must derive the windows from the `A0`
+  entry. Not verified.
+- The Android app's 3.7" two-colour script is the special one mentioned above: its `A1` commands are only
+  `00` and `04`, not the SSD-style list. The Flipper uses its standard script for 3.7". Which one a board
+  needs is unknown.
+
 ## What is still unknown
 
 - What a real board answers (status words, any data in the answers to `F0 DB 02 00 00` and `F0 DB`).
