@@ -3,7 +3,9 @@
 Sources, strongest first:
 
 1. **Traffic.** The iOS app NFC-D3-Pro sending images to the `arduino/` firmware pretending to be the
-   board (`emulate 600 sniff`, see `arduino/README.md`), 2026-11-15. Three panel sizes.
+   board (`emulate 600 sniff`, see `arduino/README.md`), 2026-11-15. Six captures: four
+   two-colour panels (1.54", 1.53", 0.97", 2.13"), one four-colour (2.66", 296 x 152) and one three-colour
+   (2.13").
 2. **The Android app's code.** `NFC-D3-Pro.apk` from Good Display, decompiled with JADX (the app was
    never run). The protocol is in one routine, `writeTag`, and a table class, `data`. The APK and its
    decompiled source are not in this repo.
@@ -68,7 +70,8 @@ carries 27 variants:
 | 51 | 20 | 240 x 416 (3.71") | | 51 | 20 | 480 x 416 |
 | 51 | 30 | 240 x 416 | | | | |
 
-Seen in traffic: `12` 1.54" (200 x 200), `00` 2.13" (122 x 250, 16 blocks) and `07` 0.97" (88 x 184).
+Seen in traffic: `12` 1.54" (200 x 200) and 1.53" (152 x 152), `00` 2.13" (122 x 250, 16 blocks) and
+`07` 0.97" (88 x 184), all two-colour; `06` 2.66" four-colour; `00` 2.13" three-colour (chan `30`).
 The Flipper source agrees on `00`, `01`, `12` and `51`.
 
 ## The set-up entries
@@ -97,6 +100,107 @@ write, `A4` and `A5` are pin states, waits and delays (my reading). The payload 
 (`44`, `45`, `4F`, the gate count) change with the panel, and the app has one block per size. The
 Flipper writer sends **one fixed set-up for every panel** and patches only the `A0` entry, and reports
 working with several sizes, so the board probably tolerates a mismatch; not verified.
+
+## Check against the traffic
+
+The `F0 DB` set-up, the `F0 DA` panel type and the image blocks seen from the iOS app were compared with
+the strings the decompiled Android app builds for the same panel (`data.setEpdInit`). **All six match
+byte for byte**, so the decompiled `data` class is a reliable map of what the iPhone sends too.
+
+| Capture | Set-up | `F0 DA` | Image | Refresh |
+|---|---|---|---|---|
+| 1.54", 1.53", 0.97", 2.13", two-colour | 103 or 108 B, SSD1680/1681-style opcodes | `F0 <res> 20` | one plane, index 0 | `F0 D4 05 80 00` |
+| 2.13", three-colour | 109 B, same opcodes, chan `30` | `F0 00 30` | 16 blocks at index 0 (black/white) and 16 at index 1 (red) | `F0 D4 05 80 00`, 16 busy polls |
+| 2.66", four-colour (296 x 152) | 141 B, different opcodes (below) | `F0 06 20` | 45 blocks, index 0 only | `F0 D4 85 80 00`, 14 busy polls |
+
+**Four-colour differences:**
+- The set-up uses a different command set: `00` (panel setting), `01`, `03`, `06` (booster), `50`, `60`,
+  `61` (resolution), `E3`, `E9`. It looks like the JD79661/JD79667 family, not SSD. The wrapper (`A0`
+  start, `A1` command, `A2`/`A3` update and RAM write, `A4`/`A5` pins and waits) is the same, so the board
+  seems to replay whatever script the phone sends for the panel; not documented by Good Display.
+- The width in the `A0` entry is counted in bits, so twice the pixel width: 296 x 152 sends `01 30` (304) x
+  `01 28` (296).
+- Data is 2 bits per pixel in one plane: 152 x 296 x 2 / 8 = 11,248 B = 45 blocks.
+- The refresh uses `P1 = 85` (bit 7: skip the panel check) where the other kinds use `05`.
+
+**Four-colour panels the Android app knows** (from the `A0` entry; width is half the bit count):
+
+| Panel | Width x height | Notes |
+|---|---|---|
+| 0.97" | 88 x 184 | |
+| 1.53" / 1.54" | 152 x 152 / 200 x 200 | |
+| 2.13" | 128 x 250 | |
+| 2.66" | 152 x 296 | GDEY0266F51; also on iOS |
+| 2.66" | 184 x 360 | GDEY0266F52H; **not on iOS** |
+| 2.7" | 176 x 264 | |
+| 2.9" | 128 x 296 | GDEY029F52; also on iOS |
+| 2.9" | 168 x 384 | GDEY029F51H; **not on iOS** |
+| 3.7" | 240 x 416 | GDEM037F51; excluded for iPhone by Good Display |
+| 4.2" | 400 x 300 | |
+
+## Panels the iOS app does not offer
+
+Good Display's NFC-D3-029 page lists GDEY0266F52H, GDEY029F51H and GDEM037F51 as not working on iPhone.
+The iOS app offers one four-colour entry for 2.66" (296 x 152) and one for 2.9" (128 x 296); the higher
+resolution variants are missing. The Android app has scripts for them, so the board side is fine.
+
+- Both missing panels have more pixels than the offered ones (16 KB of four-colour data against 9 to 11 KB)
+  and use the newer JD79667 driver, where the offered ones use JD79661. The two traits go together here,
+  so this doesn't say which one matters.
+- In `data.java` the four-colour sizes with a third string, `epd_init[2]` (never sent by the Android app),
+  are 0.97", 1.54", 2.13", 2.66" (296 x 152), 2.7" and 2.9" (128 x 296). The ones without it are 1.53",
+  2.66" (184 x 360), 2.9" (168 x 384), 3.7" and 4.2". The gap matches the exclusions, but what that string
+  is for is unknown.
+- Memory is not the reason as far as the traffic shows: the image is streamed in 250-byte blocks.
+
+## Where the panel is programmed
+
+**In the app, not in the board.** The phone sends the panel's whole command script in the `F0 DB` set-up
+before every image, one script per panel and colour type (`data.setEpdInit`). The board's chip (FM1280)
+only receives it; as far as the traffic shows it clocks each `A1`/`A2`/`A3` entry out to the panel. A panel
+the app has no script for can't be driven from it, which is why the iOS app can't offer some panels.
+
+Checked against the JADARD JD79661AA datasheet (V1.0.4, copy on
+[Adafruit's CDN](https://cdn-learn.adafruit.com/assets/assets/000/138/563/original/JD79661AA_V1.0.4_20230720_spec.pdf)):
+the opcodes `00` PSR, `01` PWR, `02` POF, `04` PON, `06` BTST, `07` DSLP (check code `A5`), `10` DTM, `12`
+DRF (parameter `00`), `30` PLL, `50` CDI and `61` TRES (HRES 152 and VRES 296 for the 2.66") are all in it,
+with matching parameters. `03`, `4D`, `60`, `B4`, `B5`, `E0`, `E6`, `E7` and `E9` are not; they are
+probably vendor settings. Nothing has run on a real panel yet.
+
+### What changes from panel to panel (four-colour scripts)
+
+Values after each opcode, from the app's scripts. `-` means the script doesn't send it.
+
+| Opcode | 0.97" | 1.53" | 2.66" 152x296 | 2.66" 184x360 | 2.7" | 2.9" 128x296 | 2.9" 168x384 | 3.7" | 4.2" |
+|---|---|---|---|---|---|---|---|---|---|
+| `4D` | 78 | 78 | 78 | 78 | 78 | 78 | 78 | - | - |
+| `00` | 0F29 | 0F29 | 0F29 | 0F29 | 0F29 | 0F29 | 0F29 | 0F29 | 2F69 |
+| `01` | 0700 | - | 0700 | 0700 | 0700 | 0700 | 0700 | 070022780A22 | 07F0 |
+| `03` | 105444 | - | 105444 | 105444 | 105444 | 105444 | 105444 | 105444 | - |
+| `06` | 05003F0A25121A | 0D123020192A22 | 05003F0A25121A | same | same | same | same | C0C0C0 | 0F8B9C96 |
+| `50` | 37 | 37 | 37 | 37 | 37 | 37 | 37 | 37 | 37 |
+| `60`, `E7`, `E3`, `B4`, `B5` | 0202, 1C, 22, D0, - | - | 0202, 1C, 22, D0, 03 | same | same | same | same | no `B4`/`B5` | - |
+| `61` | 0058 00B8 | 0098 0098 | 0098 0128 | 00B8 0168 | 00B0 0128 | 0080 0128 | 00A8 0180 | 00F0 01A0 | 0190 012C |
+| `E9`, `30` | 01, 08 | 01, 08 | 01, 08 | 01, 08 | 01, 08 | 01, 08 | 01, 08 | 01, 08 | 01, 08 |
+| `E0` + `E6` | 02, 5D | - | 02, 68 | **-** | 02, 5C | 02, 5A | **-** | - | - |
+
+What this says:
+- **One oddity:** for the 2.7" the `A0` entry says 176 x 264 and the unused `epd_init[2]` string says the
+  same in its `61`, but the string the app sends has `61 00 B0 01 28`, i.e. 296 rows. Either a typo in the
+  app or the panel ignores it; unexplained.
+- **The undocumented opcodes carry the same values on every panel that has them** (0.97", 2.66", 2.7" and
+  2.9"). They look like chip set-up, not per-panel tuning. The script differs from panel to panel in the
+  resolution (`61`, and the `A0` header) and in `E6`, which takes 5A, 5C, 5D or 68 (my guess: a
+  fast-refresh waveform or temperature value; the datasheet has no `E0` or `E6`).
+- **The two panels the iOS app doesn't offer (2.66" 184 x 360, 2.9" 168 x 384) have the same script as
+  their lower-resolution siblings, except for the resolution and the missing `E0`/`E6` step.** Both use
+  the newer JD79667 chip according to the vendor pages; the script doesn't show a difference.
+- **`E0`/`E6` is absent from exactly the sizes that have no `epd_init[2]`** (1.53", 2.66" 184 x 360,
+  2.9" 168 x 384, 3.7", 4.2"). So that third string probably belongs to the fast-refresh variant. What
+  it is sent for is still unknown.
+- **Other chips.** 1.54" (`E9 EF F6 EF 04 E0 E6`, no resolution command), 2.13" (`06 E9 04 E0 E6`), 3.7"
+  (`C3`, `FD`, `DA`, `C9`, `A8`, `FF` entries) and 4.2" (`00 2F69`, `62`) use quite different scripts, so
+  they are different panel chips.
 
 ## Before the set-up *(Flipper)*
 
