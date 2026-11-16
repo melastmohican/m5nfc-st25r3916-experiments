@@ -102,6 +102,23 @@ int main() {
   r = tx(t3, {0x03, 0xF0, 0xDE, 0x00, 0x00, 0x01});
   CHECK(r == V({0x03, 0x00, 0x90, 0x00}));
   CHECK(sniff.apduCount() == 2 && sniff.sessionCount() == 1);
+  // after a refresh (F0 D4) the first busy polls answer busy (01), then idle (00)
+  tx(t3, {0x02, 0xF0, 0xD4, 0x05, 0x80, 0x00});
+  for (int i = 0; i < nfc::SniffApp::kBusyPolls; i++) {
+    r = tx(t3, {(uint8_t)(0x03 ^ (i & 1)), 0xF0, 0xDE, 0x00, 0x00, 0x01});
+    CHECK(r.size() == 4 && r[1] == 0x01);
+  }
+  r = tx(t3, {0x03, 0xF0, 0xDE, 0x00, 0x00, 0x01});
+  CHECK(r.size() == 4 && r[1] == 0x00);
+  CHECK(sniff.apduCount() == 2 + 1 + nfc::SniffApp::kBusyPolls + 1);
+  // class 00 commands are served by a real NDEF tag: SELECT the CC, READ BINARY gives its 15 bytes
+  tx(t3, {0x02, 0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01});
+  tx(t3, {0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x03});
+  r = tx(t3, {0x02, 0x00, 0xB0, 0x00, 0x00, 0x0F});
+  CHECK(r.size() == 1 + 15 + 2 && r[1] == 0x00 && r[2] == 0x0F && r[r.size() - 2] == 0x90);
+  // the capture is a list of [kind][len hi][len lo][bytes] records, commands and answers alternating
+  sniff.clear();
+  tx(t3, {0x02, 0xF0, 0xD2, 0x00, 0x00, 0x03, 0x11, 0x22, 0x33});
   const uint8_t* cap = sniff.capture();
   CHECK(cap[0] == 1 && cap[2] == 8 && cap[3] == 0xF0 && cap[3 + 8] == 2 && cap[3 + 8 + 2] == 2);
 

@@ -2,8 +2,10 @@
 //
 //   Type4NdefApp  an NFC Forum Type 4 tag: SELECT the NDEF application (D2760000850101), the
 //                 capability container E103 and the NDEF file E104, READ BINARY and UPDATE BINARY.
-//   SniffApp      records every APDU in full and answers 90 00 to everything, so an app that
-//                 sends a vendor protocol (for example F0 D2 image packets) keeps talking.
+//   SniffApp      records every APDU in full. Class 00 commands (SELECT, READ BINARY) are served
+//                 by a real Type 4 NDEF tag, so the phone's own background tag reader finishes
+//                 instead of looping; everything else gets 90 00, so an app that sends a vendor
+//                 protocol (for example F0 D2 image packets) keeps talking.
 #pragma once
 #include <stddef.h>
 #include <stdint.h>
@@ -37,8 +39,15 @@ class SniffApp : public ApduApp {
  public:
   static constexpr size_t CAPTURE_SIZE = 16384;
 
+  // After a screen refresh (F0 D4) the first kBusyPolls busy queries (F0 DE) answer "busy" (01),
+  // like a real panel that needs a second or two; then "idle" (00).
+  static constexpr int kBusyPolls = 3;
+
   size_t apdu(const uint8_t* cmd, size_t n, uint8_t* resp, size_t cap) override;
-  void reset() override { sessions_++; }
+  void reset() override {
+    sessions_++;
+    ndef_.reset();
+  }
 
   // The capture is a list of records: [1 = command, 2 = response][length hi][length lo][bytes].
   const uint8_t* capture() const { return buf_; }
@@ -46,14 +55,16 @@ class SniffApp : public ApduApp {
   size_t apduCount() const { return apdus_; }
   size_t sessionCount() const { return sessions_; }
   bool full() const { return full_; }
-  void clear() { used_ = apdus_ = sessions_ = 0; full_ = false; }
+  void clear() { used_ = apdus_ = sessions_ = 0; busyLeft_ = 0; full_ = false; }
 
  private:
   void record(uint8_t kind, const uint8_t* data, size_t n);
+  Type4NdefApp ndef_;
   uint8_t buf_[CAPTURE_SIZE];
   size_t used_ = 0;
   size_t apdus_ = 0;
   size_t sessions_ = 0;
+  int busyLeft_ = 0;
   bool full_ = false;
 };
 

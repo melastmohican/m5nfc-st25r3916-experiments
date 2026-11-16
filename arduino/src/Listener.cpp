@@ -170,9 +170,15 @@ int Listener::start(const uint8_t uid[7], uint16_t atqa, uint8_t sak) {
   rf_.writeReg(REG_ANT_TUNE1, 0x00);
   rf_.writeReg(REG_ANT_TUNE2, 0xFF);
   for (uint8_t reg = 0x30; reg <= 0x33; reg++) rf_.writeSpaceB(reg, 0x00);  // over/undershoot off
+  // ST's RFAL listen set-up (rfal_analogConfigTbl.h): answer with the chip's internal load modulation
+  // (AUX_MOD in register space B: lm_dri on, lm_ext off). The reader-mode init does not touch it.
+  uint8_t auxMod = rf_.readSpaceB(0x28);
+  rf_.writeSpaceB(0x28, (auxMod & ~0x20) | 0x10);
+  uint8_t before[2] = {auxMod, rf_.readSpaceB(0x28)};
   rf_.command(CMD_UNMASK_RX);
   logHead_ = logCount_ = logDropped_ = 0;
   fields_ = frames_ = 0;
+  log(EV_IRQ, before, 2);  // AUX_MOD before and after the change above
   gotoOff();
   return rf_.takeIoError() ? ERR_I2C : OK;
 }
