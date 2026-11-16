@@ -82,6 +82,10 @@ Errors print as `error: ...` on stderr and the exit status is 1.
 
 User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as the UID, lock bytes, capability container (page 3) and configuration pages, are refused unless you pass `--force`. Their bits are one-way: a lock bit cannot be cleared again. Use a spare tag when you experiment with them.
 
+## Experiment: acting as a tag (does not work yet)
+
+`nfc/listen.py` and `tools/listen_probe.py` put the chip in NFC-A target mode (ported from M5Unit-NFC) so a phone could read and write it. Measured with an iPhone: the chip detects the phone's field and bit rate and answers REQA by itself, and anticollision starts, but the phone then drops the field because a reply to its first command (a Type 2 READ) takes about 10 ms through `pyftdi`, and the phone allows about 5 ms. Every I2C operation costs about 1 ms even with the latency timer at 1 ms, and a reply needs about seven. A raw MPSSE round trip is only 0.2 ms, so batching the I2C transfers into single USB writes might get under the limit; that is not built. Tag emulation works from the Feather: see [`../arduino`](../arduino/README.md#acting-as-a-tag-card-emulation).
+
 ## Supported tags and limits
 
 - Reading and writing work for NTAG215 and other Type 2 tags with 4- or 7-byte UIDs. Only NTAG215 has been tested.
