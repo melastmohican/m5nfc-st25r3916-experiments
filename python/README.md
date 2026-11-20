@@ -93,6 +93,23 @@ User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as th
 - A full 135-page dump takes about 0.7 seconds (select and dump alone about 0.5 s). It took 7 s until the FTDI latency timer was lowered from its 16 ms default to 1 ms in `nfc/transport.py`: every I2C operation waits for one timer tick, about 1 ms now instead of 18 ms. It is still slower than the Feather folders because every I2C transfer goes through USB.
 - Each command takes about 5 s longer to exit, because closing the FTDI device (`pyftdi`) is slow. The cause is not found.
 
+## Is a tag genuine NXP?
+
+`ident` prints `Type: NTAG215 (NXP)` from the `GET_VERSION` bytes, and a clone can copy those. Two other checks tell more:
+
+- The first UID byte is the manufacturer code. NXP is `04`.
+- `READ_SIG` returns a 32-byte ECDSA signature over the UID that verifies against NXP's public key (secp128r1, NTAG21x datasheet 10.8). `ident` prints it but does not verify it. A reply that repeats pages 0-3 means the tag has no signature.
+
+Tags checked on 2026-11-19, with the iPhone app NFC Tools as a second opinion:
+
+| Tag | Reports | UID byte 0 | `READ_SIG` | Memory |
+|---|---|---|---|---|
+| M5Stack card | NTAG215 (NXP) | `04` | pages 0-3 twice; NFC Tools: signature invalid | not tested |
+| SwitchBot NFC tag stickers (Amazon) | NTAG216 | `1D`, Shanghai Fudan | 32 bytes, not NXP-signed | full 231 pages (888 bytes user) |
+| Gusruvti NTAG213 stickers (Amazon) | NTAG213 | `53`, Shanghai Feiju | pages 0-3 twice | full 45 pages (144 bytes user) |
+
+All three read, write and hold their NDEF like NTAG21x, and the two Amazon listings do not claim NXP. The memory test wrote a marker to the last user page and restored it, and read past the end of memory (a real NTAG wraps at the last page and refuses the next block). Never write page 40 on an NTAG213 (page 226 on an NTAG216): those are the dynamic lock bytes, and set bits cannot be cleared.
+
 ## Diagnostics
 
 `uv run python tools/probe_nfc_b.py` checks whether a card couples to the reader and whether it answers on NFC-A or NFC-B (antenna amplitude and phase, WUPA, REQB and WUPB; the Mac speaks cues for what to put on the unit). It was written for a US passport that did not answer in any position: the reader coupled to its antenna but no chip answered on either mode. The script's docstring has the details and the limits of that result.
