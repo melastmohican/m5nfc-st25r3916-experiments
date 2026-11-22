@@ -1,0 +1,109 @@
+//! ISO-DEP target with the Type 4 NDEF app and the sniffer, same checks as
+//! `arduino/test/test_isodeptarget.cpp`.
+use super::apps::{SniffApp, Type4NdefApp, BUSY_POLLS, REFRESH_WTX_REQUESTS};
+use super::isodep::{IsoDepTarget, ATS};
+use super::{Target, TargetReply};
+
+fn tx<T: Target>(t: &mut T, f: &[u8]) -> (Vec<u8>, TargetReply) {
+    let mut out = [0u8; 300];
+    let r = t.handle(f, &mut out);
+    (out[..r.len].to_vec(), r)
+}
+
+fn r<T: Target>(t: &mut T, f: &[u8]) -> Vec<u8> {
+    tx(t, f).0
+}
+
+const SELECT_APP: [u8; 13] = [0x02, 0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01];
+
+#[test]
+fn type4_through_isodep() {
+    let mut t = IsoDepTarget::new(Type4NdefApp::new());
+
+    assert!(r(&mut t, &[0x02, 0x00, 0xA4, 0x04, 0x00]).is_empty()); // before RATS: silent
+    let ats = r(&mut t, &[0xE0, 0x80]);
+    assert_eq!(ats, ATS);
+    assert!(t.activated());
+
+    // SELECT the NDEF application, block number 0
+    assert_eq!(
+        r(&mut t, &[0x02, 0x00, 0xA4, 0x04, 0x00, 0x07, 0xD2, 0x76, 0x00, 0x00, 0x85, 0x01, 0x01, 0x00]),
+        [0x02, 0x90, 0x00]
+    );
+    // SELECT the CC file, block number 1: the reply mirrors it
+    assert_eq!(r(&mut t, &[0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x03]), [0x03, 0x90, 0x00]);
+    // READ BINARY of the CC
+    let x = r(&mut t, &[0x02, 0x00, 0xB0, 0x00, 0x00, 0x0F]);
+    assert!(x.len() == 1 + 15 + 2 && x[0] == 0x02 && x[1] == 0x00 && x[2] == 0x0F && x[3] == 0x20);
+    assert_eq!(x[x.len() - 2], 0x90);
+    // SELECT the NDEF file, read NLEN
+    assert_eq!(r(&mut t, &[0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x04]), [0x03, 0x90, 0x00]);
+    assert_eq!(r(&mut t, &[0x02, 0x00, 0xB0, 0x00, 0x00, 0x02]), [0x02, 0x00, 0x00, 0x90, 0x00]);
+
+    // UPDATE BINARY: NLEN = 0 first, then the data, then the real NLEN (the usual order)
+    assert_eq!(r(&mut t, &[0x03, 0x00, 0xD6, 0x00, 0x00, 0x02, 0x00, 0x00]), [0x03, 0x90, 0x00]);
+    assert_eq!(r(&mut t, &[0x02, 0x00, 0xD6, 0x00, 0x02, 0x05, 0xD1, 0x01, 0x01, 0x54, 0x00]), [0x02, 0x90, 0x00]);
+    assert_eq!(r(&mut t, &[0x03, 0x00, 0xD6, 0x00, 0x00, 0x02, 0x00, 0x05]), [0x03, 0x90, 0x00]);
+    let f = t.app.ndef_file();
+    assert!(f[1] == 0x05 && f[2] == 0xD1 && t.app.update_count() == 3);
+
+    // an R(NAK) repeats the last I-block; an R(NAK) with a fresh block number just acknowledges
+    assert_eq!(r(&mut t, &[0xB3]), [0x03, 0x90, 0x00]);
+    assert_eq!(r(&mut t, &[0xB2]), [0xA2]);
+
+    // chaining: two I-blocks with the chain bit set, then the last one
+    let mut t2 = IsoDepTarget::new(Type4NdefApp::new());
+    r(&mut t2, &[0xE0, 0x80]);
+    r(&mut t2, &SELECT_APP);
+    r(&mut t2, &[0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x04]);
+    assert_eq!(r(&mut t2, &[0x12, 0x00, 0xD6, 0x00, 0x00]), [0xA2]); // first part of a 4-byte UPDATE BINARY
+    assert_eq!(r(&mut t2, &[0x13, 0x04, 0xAA, 0xBB]), [0xA3]);
+    assert_eq!(r(&mut t2, &[0x02, 0xCC, 0xDD]), [0x02, 0x90, 0x00]);
+    let f = t2.app.ndef_file();
+    assert!(f[0] == 0xAA && f[3] == 0xDD);
+
+    // errors: unknown file, wrong class, unknown instruction
+    assert_eq!(r(&mut t2, &[0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0x3F, 0x00]), [0x03, 0x6A, 0x82]);
+    assert_eq!(r(&mut t2, &[0x02, 0x80, 0x00, 0x00, 0x00]), [0x02, 0x6E, 0x00]);
+    assert_eq!(r(&mut t2, &[0x03, 0x00, 0x88, 0x00, 0x00]), [0x03, 0x6D, 0x00]);
+
+    // DESELECT answers and halts; afterwards the layer is silent until the next RATS
+    let (x, rep) = tx(&mut t2, &[0xC2]);
+    assert_eq!(x, [0xC2]);
+    assert!(rep.halt && !t2.activated());
+    assert!(r(&mut t2, &[0x02, 0x00, 0xB0, 0x00, 0x00, 0x02]).is_empty());
+    assert_eq!(r(&mut t2, &[0xE0, 0x80]), ats);
+}
+
+#[test]
+fn sniffer() {
+    let mut t = IsoDepTarget::new(SniffApp::new());
+    r(&mut t, &[0xE0, 0x80]);
+    assert_eq!(r(&mut t, &[0x02, 0xF0, 0xD2, 0x00, 0x00, 0x03, 0x11, 0x22, 0x33]), [0x02, 0x90, 0x00]);
+    assert_eq!(r(&mut t, &[0x03, 0xF0, 0xDE, 0x00, 0x00, 0x01]), [0x03, 0x00, 0x90, 0x00]);
+    assert!(t.app.apdu_count() == 2 && t.app.session_count() == 1);
+    // a refresh (F0 D4) is answered with five S(WTX) requests, then the I-block (same block number)
+    assert_eq!(r(&mut t, &[0x02, 0xF0, 0xD4, 0x05, 0x80, 0x00]), [0xF2, 0x01]);
+    for _ in 1..REFRESH_WTX_REQUESTS {
+        assert_eq!(r(&mut t, &[0xF2, 0x01]), [0xF2, 0x01]);
+    }
+    assert_eq!(r(&mut t, &[0xF2, 0x01]), [0x02, 0x90, 0x00]);
+    // after a refresh the first busy polls answer busy (01), then idle (00)
+    for i in 0..BUSY_POLLS {
+        let x = r(&mut t, &[0x03 ^ (i & 1), 0xF0, 0xDE, 0x00, 0x00, 0x01]);
+        assert!(x.len() == 4 && x[1] == 0x01);
+    }
+    let x = r(&mut t, &[0x03, 0xF0, 0xDE, 0x00, 0x00, 0x01]);
+    assert!(x.len() == 4 && x[1] == 0x00);
+    assert_eq!(t.app.apdu_count(), 2 + 1 + BUSY_POLLS as usize + 1);
+    // class 00 commands are served by a real NDEF tag: SELECT the CC, READ BINARY gives its 15 bytes
+    r(&mut t, &SELECT_APP);
+    r(&mut t, &[0x03, 0x00, 0xA4, 0x00, 0x0C, 0x02, 0xE1, 0x03]);
+    let x = r(&mut t, &[0x02, 0x00, 0xB0, 0x00, 0x00, 0x0F]);
+    assert!(x.len() == 1 + 15 + 2 && x[1] == 0x00 && x[2] == 0x0F && x[x.len() - 2] == 0x90);
+    // the capture is a list of [kind][len hi][len lo][bytes] records, commands and answers alternating
+    t.app.clear();
+    r(&mut t, &[0x02, 0xF0, 0xD2, 0x00, 0x00, 0x03, 0x11, 0x22, 0x33]);
+    let c = t.app.capture();
+    assert!(c[0] == 1 && c[2] == 8 && c[3] == 0xF0 && c[3 + 8] == 2 && c[3 + 8 + 2] == 2);
+}

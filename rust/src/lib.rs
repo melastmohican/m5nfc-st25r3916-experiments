@@ -3,6 +3,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod ccid;
+pub mod emu;
 pub mod ndef;
 pub mod parse;
 pub mod tag;
