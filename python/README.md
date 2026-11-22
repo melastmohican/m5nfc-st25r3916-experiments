@@ -82,9 +82,19 @@ Errors print as `error: ...` on stderr and the exit status is 1.
 
 User memory is pages 4 to 129 (504 bytes). Writes outside that range, such as the UID, lock bytes, capability container (page 3) and configuration pages, are refused unless you pass `--force`. Their bits are one-way: a lock bit cannot be cleared again. Use a spare tag when you experiment with them.
 
-## Experiment: acting as a tag (does not work yet)
+## Acting as a tag
 
-`nfc/listen.py` and `tools/listen_probe.py` put the chip in NFC-A target mode (ported from M5Unit-NFC) so a phone could read and write it. Measured with an iPhone: the chip detects the phone's field and bit rate and answers REQA by itself, and anticollision starts, but the phone then drops the field because a reply to its first command (a Type 2 READ) takes about 10 ms through `pyftdi`, and the phone allows about 5 ms. Every I2C operation costs about 1 ms even with the latency timer at 1 ms, and a reply needs about seven. A raw MPSSE round trip is only 0.2 ms, so batching the I2C transfers into single USB writes might get under the limit; that is not built. Tag emulation works from the Feather: see [`../arduino`](../arduino/README.md#acting-as-a-tag-card-emulation).
+`tools/listen_probe.py` puts the chip in NFC-A target mode so a phone can read and write it, then prints what the phone did:
+
+```
+uv run python tools/listen_probe.py [seconds] [t2|t4|sniff]
+```
+
+`t2` (default) is an NTAG215, `t4` an NFC Forum Type 4 NDEF tag, `sniff` an ISO-DEP card that logs every APDU (UID `04112233445566`). The listener is `nfc/listen.py`, the tag models are `nfc/type2tag.py`, `nfc/isodeptarget.py` and `nfc/apduapps.py`, all ported from [`../arduino`](../arduino/README.md#acting-as-a-tag-card-emulation).
+
+A phone gives a tag about 5 ms to answer. This first failed through the FT232H because `pyftdi` does one USB round trip per I2C byte: one reply took about 8 ms and a whole Type 2 command 11 ms. `FtdiTransport.batch()` in `nfc/transport.py` builds the same MPSSE command stream as raw batches, one USB write and one read per step, and checks the acknowledgements afterwards. The listener sends the poll, the frame read and the reply this way, and so the state changes between the select and the first command (`READY`, `ACTIVE`, `HALT`). A whole Type 2 command takes about 1.7 ms (`tools/batch_timing.py` measures it). The bus has to run at 400 kHz: at 100 kHz the bytes alone take too long. The batch reaches into `pyftdi`'s private `I2cController` helpers; the version is pinned in `uv.lock` (0.57.2) and `tests/test_batch.py` checks the command shape.
+
+Checked with an iPhone and NFC Tools on 21 Nov 2026: `t2` was identified as an NTAG215 and took a text record (25 frames answered, 7 tag writes); `t4` took a text record through the Type 4 NDEF file and the phone read it back (37 frames). `sniff` not run. It needs a quiet USB bus: a macOS USB hiccup longer than a few milliseconds makes the phone drop the field.
 
 ## Supported tags and limits
 

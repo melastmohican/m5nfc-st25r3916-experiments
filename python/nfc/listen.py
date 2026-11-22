@@ -171,6 +171,10 @@ class Listener:
             if m:
                 rf.write_reg(REG_IRQ_MASK + i, rf.read_reg(REG_IRQ_MASK + i) | m)
 
+    def _regs(self, *regs):
+        """Several single registers in one USB round trip."""
+        return [r[0] for r in self.rf.batch([("x", bytes([reg | OP_READ]), 1) for reg in regs])]
+
     def _irq(self, bits):
         """Reads (and clears) the chip's interrupt registers into _pending, returns the asked-for bits."""
         self._pending |= int.from_bytes(self.rf.batch([("x", bytes([REG_IRQ_MAIN | OP_READ]), 4)])[0], "little")
@@ -286,27 +290,58 @@ class Listener:
         self._state(READY)
         if self._irq(I_EOF):
             return self._goto_off()
-        rf.clear_bits(REG_AUX, AUX_NO_CRC_RX)
-        rf.write_reg(REG_BIT_RATE, 0x00)  # 106 kbit/s both ways
-        rf.clear_bits(REG_OP_CTRL, OP_CTRL_WU)
-        rf.write_reg(REG_MODE, 0x88)  # target, NFC-A, fixed bit rate
+        # This runs between the chip's answer to the select and the reader's first command (about 5 ms),
+        # so it is two round trips (read the two registers, then write all four) instead of six operations.
+        aux, op_ctrl = self._regs(REG_AUX, REG_OP_CTRL)
+        rf.batch([
+            ("w", bytes([REG_AUX, aux & ~AUX_NO_CRC_RX & 0xFF])),
+            ("w", bytes([REG_BIT_RATE, 0x00])),  # 106 kbit/s both ways
+            ("w", bytes([REG_OP_CTRL, op_ctrl & ~OP_CTRL_WU & 0xFF])),
+            ("w", bytes([REG_MODE, 0x88])),  # target, NFC-A, fixed bit rate
+        ])
 
     def _goto_active(self):
         self._state(ACTIVE)
-        self.rf.set_bits(REG_PT_DEF, PT_D_106_AC_A)  # stop the automatic response: we answer from now on
-        self._irq(I_PAR | I_CRC | I_ERR2 | I_ERR1)
-        self._enable_irqs(I_RXE)
+        # Also on the critical path: two round trips. Stop the automatic response (we answer from now on),
+        # drop stale error flags, unmask the receive-end interrupt.
+        irqs, pt_def, mask = self.rf.batch([
+            ("x", bytes([REG_IRQ_MAIN | OP_READ]), 4),
+            ("x", bytes([REG_PT_DEF | OP_READ]), 1),
+            ("x", bytes([REG_IRQ_MASK | OP_READ]), 1),
+        ])
+        self._pending |= int.from_bytes(irqs, "little")
+        self._pending &= ~_ERR_BITS
+        self.rf.batch([
+            ("w", bytes([REG_PT_DEF, pt_def[0] | PT_D_106_AC_A])),
+            ("w", bytes([REG_IRQ_MASK, mask[0] & ~(I_RXE & 0xFF) & 0xFF])),
+        ])
 
     def _goto_halt(self):
         rf = self.rf
         self._state(HALT)
-        rf.clear_bits(REG_PT_DEF, PT_D_106_AC_A)
-        rf.command(CMD_GO_TO_SLEEP)
-        self._change(REG_MODE, 0xC8, 0xFB)
-        rf.clear_bits(REG_ISO14443A, ISO_NFC_F0)
-        rf.command(CMD_UNMASK_RX)
-        self._enable_irqs(I_NFCT | I_RXS | I_CRC | I_ERR1 | I_ERR2 | I_PAR | I_EON | I_EOF | MODE_IRQ)
-        if not rf.read_reg(REG_AUX_DISPLAY) & AUX_EFD_O:
+        # A phone sends WUPA right after HLTA, a few ms later: this is two round trips (read what is
+        # needed, then write everything in the original order) instead of about fifteen operations.
+        pt_def, mode, iso, masks, aux_display = rf.batch([
+            ("x", bytes([REG_PT_DEF | OP_READ]), 1),
+            ("x", bytes([REG_MODE | OP_READ]), 1),
+            ("x", bytes([REG_ISO14443A | OP_READ]), 1),
+            ("x", bytes([REG_IRQ_MASK | OP_READ]), 4),
+            ("x", bytes([REG_AUX_DISPLAY | OP_READ]), 1),
+        ])
+        bits = I_NFCT | I_RXS | I_CRC | I_ERR1 | I_ERR2 | I_PAR | I_EON | I_EOF | MODE_IRQ
+        ops = [
+            ("w", bytes([REG_PT_DEF, pt_def[0] & ~PT_D_106_AC_A & 0xFF])),
+            ("w", bytes([CMD_GO_TO_SLEEP])),
+            ("w", bytes([REG_MODE, (mode[0] & ~0xFB & 0xFF) | (0xC8 & 0xFB)])),
+            ("w", bytes([REG_ISO14443A, iso[0] & ~ISO_NFC_F0 & 0xFF])),
+            ("w", bytes([CMD_UNMASK_RX])),
+        ]
+        for i in range(4):  # unmask these interrupts: a 0 bit in the mask register
+            m = (bits >> (8 * i)) & 0xFF
+            if m:
+                ops.append(("w", bytes([REG_IRQ_MASK + i, masks[i] & ~m & 0xFF])))
+        rf.batch(ops)
+        if not aux_display[0] & AUX_EFD_O:
             self._goto_off()
 
     # ---- polling ------------------------------------------------------------
@@ -325,7 +360,7 @@ class Listener:
             self._p_halt()
 
     def _read_bitrate(self):
-        self._bitrate = min((self.rf.read_reg(REG_BITRATE_DETECT) >> 4) & 0x03, 2)
+        self._bitrate = min((self._regs(REG_BITRATE_DETECT)[0] >> 4) & 0x03, 2)
         self._log(EV_RATE)
 
     def _read_frame(self, cap):
@@ -355,7 +390,7 @@ class Listener:
             rf.command(CMD_UNMASK_RX)
             return
         if got & I_RXE_PTA and self._bitrate == 0:
-            if rf.read_reg(REG_PT_DISPLAY) & 0x0F > PTA_IDLE:
+            if self._regs(REG_PT_DISPLAY)[0] & 0x0F > PTA_IDLE:
                 self._goto_ready()
 
     def _p_ready(self):
@@ -438,6 +473,6 @@ class Listener:
             rf.command(CMD_UNMASK_RX)
             return
         if got & I_RXE_PTA and self._bitrate == 0:
-            if rf.read_reg(REG_PT_DISPLAY) & 0x0F > PTA_HALT:
+            if self._regs(REG_PT_DISPLAY)[0] & 0x0F > PTA_HALT:
                 self._wakeup = True
                 self._goto_ready()

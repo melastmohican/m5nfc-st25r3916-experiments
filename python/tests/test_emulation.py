@@ -147,6 +147,7 @@ class FakeRf:
         self.pt_mem = b""
         self.commands = []
         self.writes = []  # what the batched hot path wrote
+        self.batch_calls = 0  # USB round trips on the FT232H
         self.t = self  # the listener writes the PT memory through rf.t.write
 
     def write(self, data):
@@ -185,10 +186,13 @@ class FakeRf:
 
     def batch(self, ops):
         """What St25r3916.batch does on a transport without its own: the listener's hot path uses it."""
+        self.batch_calls += 1
         out = []
         for op in ops:
             if op[0] == "w":
                 self.writes.append(bytes(op[1]))
+                if len(op[1]) == 2 and op[1][0] < 0x40:  # a register write
+                    self.regs[op[1][0]] = op[1][1]
                 out.append(None)
             elif op[1][0] == L.REG_IRQ_MAIN | L.OP_READ:
                 out.append(self.read_irqs().to_bytes(4, "little"))
@@ -198,6 +202,9 @@ class FakeRf:
             elif op[1][0] == L.OP_FIFO_READ:
                 data = self.read_fifo(op[2])
                 out.append(data + bytes(op[2] - len(data)))  # a blind read past the end returns filler
+            elif op[1][0] & L.OP_READ and op[1][0] < 0x80:  # any other register read
+                reg = op[1][0] & 0x3F
+                out.append(bytes(self.regs[reg:reg + op[2]]))
             else:
                 raise AssertionError(op)
         return out
@@ -300,3 +307,14 @@ def test_listener_reads_a_frame_longer_than_the_blind_read():
     lis.poll()
     assert lis.frames == 1  # read in full: the target saw all 15 bytes (and NAKed the odd FAST_READ)
     assert rf.fifo_in == b""
+
+
+def test_select_to_active_takes_few_usb_round_trips():
+    """A phone sends its first command about 5 ms after the select; each FT232H round trip is about 0.3 ms."""
+    rf = FakeRf()
+    lis = L.Listener(rf, Type2Tag(UID))
+    lis.start(UID)
+    before = rf.batch_calls
+    select_by_reader(rf, lis)
+    assert lis.state == L.ACTIVE
+    assert rf.batch_calls - before <= 10
