@@ -97,7 +97,10 @@ impl Cli {
                 Ok(())
             }
             "help" => {
-                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] [t2|t4|sniff] | emu-dump | bootsel | help\r\n")).await;
+                // two prints: one print buffer holds 160 bytes
+                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n")).await;
+                self.print(format_args!("          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] |\r\n")).await;
+                self.print(format_args!("          emulate [S] [t2|t4|sniff] | emu-dump | bootsel | help\r\n")).await;
                 Ok(())
             }
             other => {

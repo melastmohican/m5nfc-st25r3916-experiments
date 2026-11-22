@@ -3,7 +3,7 @@
 Rust firmware ([Embassy](https://embassy.dev/)) for an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). Same two functions as [`../arduino`](../arduino) and [`../tinygo`](../tinygo), over the Feather's one USB cable:
 
 - **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader, so `pyscard`, OpenSC and `pcsctest` work with it.
-- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `cycles`).
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `cycles`, `emulate`, `emu-dump`).
 
 ```
 Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -101,6 +101,8 @@ Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds aft
 | `src/isodep.rs` | The task that keeps an ISO-DEP card activated between APDUs. |
 | `src/class.rs` | The USB CCID class on embassy-usb. |
 | `src/cli.rs` | The serial command line. |
+| `src/emu/` | Tag emulation models in the host-testable part: an NTAG215 (`type2tag.rs`), an ISO-DEP target (`isodep.rs`), a Type 4 NDEF app and an APDU sniffer (`apps.rs`), and the chip's target-mode state machine (`listener.rs`, which talks to the chip through a small `Chip` trait and is tested on a fake chip). Ported from `../arduino/src`. |
+| `src/emulate.rs` | The `emulate [S] [t2|t4|sniff]` and `emu-dump` commands and the adapter from rnfc's `Interface` to the listener. `rnfc-st25r39` has no target mode, so the listener drives the chip directly; see patch 3 in [`vendor/rnfc/PATCHES.md`](vendor/rnfc/PATCHES.md). Checked with an iPhone and NFC Tools on 21 Nov 2026: `t2` was identified as an NTAG215 and took a text record (25 frames answered); `t4` took a text record through the Type 4 NDEF file and the phone read it back (37 frames). `sniff` not run. |
 
 ### How it works
 
