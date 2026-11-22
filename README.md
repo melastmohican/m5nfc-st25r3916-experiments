@@ -1,6 +1,6 @@
-# M5Stack NFC unit (ST25R3916): read and write NTAG215 tags
+# M5Stack NFC unit (ST25R3916): read, write and emulate NTAG215 tags
 
-Six ways to read and write NTAG215 NFC tags with an [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), a small I2C module with a 13.56 MHz antenna:
+Six ways to read and write NTAG215 NFC tags, and to make the unit act as a tag, with an [M5Stack NFC Universal Unit (ST25R3916)](https://shop.m5stack.com/products/nfc-universal-unit-st25r3916), a small I2C module with a 13.56 MHz antenna:
 
 | Folder | Setup | You use it as |
 |---|---|---|
@@ -34,6 +34,23 @@ The five Feather variants present a standard CCID reader, so the Mac needs no cu
 - Read and write NDEF text and URI records. A phone (iPhone, NFC Tools) reads the records written by `python/` and `arduino/`; the `micropython/`, `tinygo/`, `rust/` and `zephyr/` records have not been checked with a phone.
 - Write single pages, and read each one back to verify it.
 - Refuse writes to the UID, lock bytes, capability container and configuration pages unless forced. Those bits are one-way, so use a spare tag if you experiment with them.
+- Act as a tag: `emulate` makes the unit answer like an NTAG215 (Type 2) or an NFC Forum Type 4 NDEF tag (ISO-DEP), so a phone can read it and write NDEF to it. See "Acting as a tag" below.
+
+## Acting as a tag
+
+The ST25R3916 can be the tag as well as the reader. The chip answers REQA and anticollision by itself from its passive target memory, and the firmware answers everything after that. A phone allows about 5 ms for the tag's first reply, so every state change on the way from select to the first command has to be fast.
+
+| Mode | The unit pretends to be | What a phone does |
+|---|---|---|
+| `t2` | an NTAG215 (135 pages: `READ`, `FAST_READ`, `WRITE`, `GET_VERSION`, `READ_SIG`, `HLTA`) | identifies it as an NTAG215 and writes a text record |
+| `t4` | an NFC Forum Type 4 NDEF tag (ISO-DEP: RATS/ATS, I-, R- and S-blocks, NDEF files `E103` and `E104`) | selects the NDEF application, reads the capability container, writes a record |
+| `sniff` | an ISO-DEP card that logs every APDU | whatever the app sends is recorded |
+
+Checked on 21 Nov 2026 with an iPhone and the NFC Tools app, in `t2` and `t4`, in all six folders: the phone identified the tag, wrote a text record, and `emu-dump` decoded it. `sniff` has been tried only in `arduino/`, with Good Display's NFC-D3-Pro app (see [`docs/good-display-nfc-eink-protocol.md`](docs/good-display-nfc-eink-protocol.md)).
+
+`python/` needed one more trick. `pyftdi` does one USB round trip per I2C byte, which made a Type 2 command take about 11 ms, too slow for a phone. Sending raw MPSSE batches (one USB write and one read) at 400 kHz brings it to about 1.7 ms. Details are in [`python/README.md`](python/README.md#acting-as-a-tag).
+
+On the Feather builds, start `emulate` before you bring the phone close: the PC/SC reader otherwise probes for a card every 300 ms with its field on, and an iPhone near a reader field opens Wallet.
 
 ## Shared interface
 
@@ -54,6 +71,8 @@ Every command on the serial port ends with a line `ok` or `error: <reason>`.
 | `cycles [N]` | N rounds of select and full dump, compared with the first. | `50/50 cycles OK; per cycle avg 167 ms, max 168 ms` |
 | `ident` | NTAG identification: `GET_VERSION` (NTAG21x datasheet 10.1), `READ_SIG` (10.8), `READ_CNT` (10.6). | `Version: 00 04 04 02 01 00 11 03`, `Type: NTAG215 (NXP)`, `Signature: <64 hex digits>`, `Counter: 0` or `Counter: not readable (NAK)` |
 | `desfire` | ISO-DEP identification of a DESFire card, no keys. | `UID`, `ATQA`/`SAK`, `ATS:  06 75 77 81 02 80`, `Version: HW 1.0 SW 1.4 vendor 0x04 type 0x01 storage 4096 bytes`, `Card UID`, the `GET_VERSION` and `GET_APPLICATION_IDS` status words, one `AID` line per application |
+| `emulate [S] [t2\|t4\|sniff]` | Acts as a tag (UID `04112233445566`) for S seconds (default 30) or until a byte arrives on the serial port (`python/`: `tools/listen_probe.py`). `t2` is an NTAG215, `t4` a Type 4 NDEF tag, `sniff` an ISO-DEP card that logs every APDU. | the event log and a summary |
+| `emu-dump` | What the last `emulate` run captured: the tag memory or NDEF file, decoded NDEF, or the APDUs (`C>` command, `R>` answer). | memory dump, `text[en]: ...`, or APDU lines |
 | `help` | Lists the commands. | |
 
 Allowed to differ: developer conveniences such as `bootsel` (Rust).
@@ -82,6 +101,7 @@ The code after `FF` is the native command code. Status words: `6A 82` a read bey
 | `cycles` | yes | yes | yes | yes | yes | yes |
 | `ident` and the `FF 60/3C/39` APDUs | yes (`ident` only: no PC/SC side) | yes | yes | yes | yes | yes |
 | `desfire` | yes | yes | yes | yes | yes | yes |
+| `emulate [S] [t2\|t4\|sniff]` and `emu-dump` | yes (`tools/listen_probe.py`, 400 kHz, batched I2C) | yes | yes | yes | yes | yes |
 | `FF CA`, `FF B0`, `FF D6` | n/a | yes | yes | yes | yes | yes |
 | ISO-DEP pass-through, ATR from the ATS | n/a | yes | yes | yes | yes | yes |
 | `FF CA` answered by the reader for ISO-DEP cards | n/a | yes | yes | yes | yes | yes |
@@ -96,11 +116,11 @@ The code after `FF` is the native command code. Status words: `6A 82` a read bey
 | Talks to the unit through | FT232H via `pyftdi` | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1) | the Feather's Qwiic port (I2C1), driver crate `rnfc-st25r39` | the Feather's Qwiic port (I2C1) |
 | Extra hardware | FT232H breakout | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable | Qwiic cable |
 | Interface to the Mac | CLI: `python -m nfc.cli` | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI | USB PC/SC reader and serial CLI |
-| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles` | the shared pseudo-APDUs (`FF CA`, `FF B0`, `FF D6`, `FF 60/3C/39`, ISO-DEP pass-through) and the same serial commands as `python/` | the same | the same | the same | the same |
+| Commands | `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `emulate`, `emu-dump` | the shared pseudo-APDUs (`FF CA`, `FF B0`, `FF D6`, `FF 60/3C/39`, ISO-DEP pass-through) and the same serial commands as `python/` | the same | the same | the same | the same |
 | Live card insert and remove events | no | yes | yes | yes | yes | yes |
 | Full 135-page dump | about 0.7 s | about 260 ms | about 180 ms | about 184 ms | about 167 ms | about 162 ms |
 | Longest read per command | n/a | 255 bytes | 255 bytes | 255 bytes | 255 bytes | 255 bytes |
-| Tests | 39, against a software fake chip or a scripted card | 54: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 3 host test programs: the CCID message layer, `ident`, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 21 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 13 host tests (CCID layer, NDEF, guards, parsing); `cycles` on hardware | 3 host test programs (the same as `arduino/`); `cycles` on hardware |
+| Tests | 46 (1 skipped), against a software fake chip or a scripted card | 60: the CCID message layer, the serial CLI, `ident`, the APDUs, pass-through, and the ISO-DEP framing (Annex B scenarios) against a fake chip or a scripted card | 5 host test programs: the CCID message layer, `ident`, the ISO-DEP framing (Annex B scenarios) and the Type 2 and ISO-DEP tag models; `cycles` on hardware | 24 Go tests: NDEF, CRC, the CCID message layer, `ident`, NAK mapping, and the ISO-DEP framing (Annex B scenarios); `cycles` on hardware | 18 host tests (CCID layer, NDEF, guards, parsing, tag models); `cycles` on hardware | 5 host test programs (the same as `arduino/`); `cycles` on hardware |
 | Reliability run | 50 of 50 dumps | 20 of 20 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 dumps | 50 of 50 cycles |
 | Easiest to change | yes: a script on the Mac | yes: Python on the board, no build | needs a PlatformIO build | needs TinyGo and a copy to the BOOTSEL drive | needs Rust, picotool and a first BOOTSEL; the chip driver is a dependency, not code to edit | needs a Zephyr workspace (about 7 GB), `west` and a copy to the BOOTSEL drive; the heaviest setup of the six |
 
