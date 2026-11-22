@@ -133,6 +133,24 @@ class St25r3916:
         self._nrt: int | None = None
 
     # ---- raw access -------------------------------------------------
+    def batch(self, ops: list[tuple]) -> list[bytes | None]:
+        """Several I2C transactions at once: ("w", bytes) or ("x", out, read_len) each.
+
+        A transport with a batch() (the FT232H one) runs them in one USB round trip; any other
+        transport runs them one at a time with the same result.
+        """
+        run = getattr(self.t, "batch", None)
+        if run is not None:
+            return run(ops)
+        results: list[bytes | None] = []
+        for op in ops:
+            if op[0] == "w":
+                self.t.write(op[1])
+                results.append(None)
+            else:
+                results.append(bytes(self.t.exchange(op[1], op[2])))
+        return results
+
     def read_regs(self, reg: int, n: int = 1) -> bytes:
         return bytes(self.t.exchange(bytes([reg | OP_READ]), n))
 

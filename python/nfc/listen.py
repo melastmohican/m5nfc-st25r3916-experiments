@@ -1,34 +1,42 @@
-"""NFC-A passive target (card emulation) on the ST25R3916: experiment, ported from M5Unit-NFC.
+"""NFC-A passive target (card emulation) on the ST25R3916, driving a target model.
 
-The register sequence and the state machine follow M5Stack's MIT-licensed emulation layer
-(M5Unit-NFC, src/nfc/layer/a/emulation_layer_a_ST25R3916.cpp, and configure_emulation_a() in
-src/unit/unit_ST25R3916_nfca.cpp). The chip answers REQA/WUPA and the whole anticollision by
-itself from the PT memory (UID, ATQA, SAK); this code only has to follow the target state and
-read the frames that arrive once the reader has selected us.
+Ported from ../arduino/src/Listener.cpp (itself from M5Stack's MIT-licensed M5Unit-NFC emulation
+layer) by way of ../micropython/nfc/listener.py. The chip answers REQA/WUPA and the whole
+anticollision by itself from the PT memory (UID, ATQA, SAK); this code follows the target state,
+reads the frames that arrive once a reader has selected us and answers them from the target model
+(Type2Tag or IsoDepTarget: handle(frame) -> (reply, nibble, halt), reset()).
 
-States: OFF (no field) -> IDLE (field seen, waiting for the bit rate) -> READY (selected by
-anticollision) -> ACTIVE (receiving frames) -> HALT (after HLTA) -> back to IDLE / OFF.
+Timing: a reader gives a tag about 5 ms to answer, so poll() has to be called back to back and
+nothing may print while it runs. Events go into a small list and are printed afterwards with
+log_lines().
 
-Timing: every I2C operation through pyftdi's I2C layer costs one USB latency tick (see
-transport.py), so replies are slow. This module is for finding out what a phone sends.
+Through the FT232H, pyftdi's one-round-trip-per-byte I2C makes a reply take about 8 ms. The hot path
+(poll, frame read, reply) therefore goes through rf.batch(), which the FT232H transport runs as one
+USB round trip each: about 1.7 ms for a whole Type 2 command at 400 kHz (tools/batch_timing.py). The bus
+has to run at 400 kHz for that. The set-up and state changes use the plain calls: they are not timed.
 """
 from __future__ import annotations
 
 import time
-from typing import Callable
 
-from .st25r3916 import (
+from nfc.st25r3916 import (
     CMD_CLEAR_FIFO,
     CMD_STOP,
     CMD_TX_WITH_CRC,
+    CMD_TX_WITHOUT_CRC,
+    OP_FIFO_LOAD,
+    OP_FIFO_READ,
+    OP_READ,
     IRQ_OSC,
     OP_CTRL_EN,
     OP_CTRL_RX_EN,
     OP_CTRL_TX_EN,
     REG_AUX,
     REG_AUX_DISPLAY,
+    REG_BIT_RATE,
     REG_FIFO_STATUS1,
     REG_IRQ_MAIN,
+    REG_IRQ_MASK,
     REG_ISO14443A,
     REG_MODE,
     REG_NUM_TX1,
@@ -36,38 +44,42 @@ from .st25r3916 import (
     REG_OP_CTRL,
     REG_TIMER_EMV,
     AUX_NO_CRC_RX,
-    NfcError,
-    St25r3916,
 )
 
-# Registers and commands used only for listening
-REG_PT_DEF = 0x08  # NFCIP-1 passive target definition
-REG_MRT = 0x0F  # mask receive timer
-REG_BITRATE_DETECT = 0x24
+def _us():
+    return int(time.perf_counter() * 1000000) & 0xFFFFFFFF
+
+
+def _diff(a, b):
+    return (a - b) & 0xFFFFFFFF
+
+REG_PT_DEF = 0x08
+REG_MRT = 0x0F
+REG_PT_MASK = 0x19
 REG_PT_DISPLAY = 0x21
+REG_BITRATE_DETECT = 0x24
 REG_ANT_TUNE1 = 0x26
 REG_ANT_TUNE2 = 0x27
 
 CMD_GO_TO_SENSE = 0xCD
 CMD_GO_TO_SLEEP = 0xCE
 CMD_UNMASK_RX = 0xD1
-OP_LOAD_PT_A = 0xA0  # write PT memory A: UID(10) ATQA(2) SAK(3)
-OP_READ_PT = 0xBF
+OP_LOAD_PT_A = 0xA0
 
+OP_CTRL_WU = 0x04
 PT_D_AC_AP2P = 0x08
 PT_D_212_424_1R = 0x04
 PT_D_106_AC_A = 0x01
 ISO_NFC_F0 = 0x20
 ISO_NO_TX_PAR = 0x80
 ISO_NO_RX_PAR = 0x40
-AUX_EFD_O = 0x40  # external field detected
-MODE_TARG = 0x80
+AUX_EFD_O = 0x40
+AUX_OSC_OK = 0x10
 
-# IRQ bits in our combined layout: main | timer << 8 | error << 16 | passive target << 24
+# IRQ bits in read_irqs() layout: main | timer << 8 | error << 16 | passive target << 24
 I_OSC = IRQ_OSC
 I_RXS = 1 << 5
 I_RXE = 1 << 4
-I_TXE = 1 << 3
 I_NFCT = 1 << 8
 I_EON = 1 << (8 + 4)
 I_EOF = 1 << (8 + 3)
@@ -79,93 +91,116 @@ I_RXE_PTA = 1 << (24 + 4)
 I_WU_AX = 1 << (24 + 1)
 I_WU_A = 1 << 24
 I_ERRORS = I_CRC | I_PAR | I_ERR1 | I_ERR2
-
 DEFAULT_IRQ = I_NFCT | I_RXS | I_EON | I_EOF | I_CRC | I_ERR1 | I_ERR2 | I_PAR
 MODE_IRQ = I_WU_A | I_WU_AX | I_RXE_PTA
-
 PTA_IDLE = 0x01
 PTA_HALT = 0x09
 
-OFF, IDLE, READY, ACTIVE, HALT = "off", "idle", "ready", "active", "halt"
-
-
-def crc_a(data: bytes) -> bytes:
-    from .nfca import crc_a as _crc
-
-    return _crc(data)
+OFF, IDLE, READY, ACTIVE, HALT = 0, 1, 2, 3, 4
+_STATE_NAMES = ("OFF", "IDLE", "READY", "ACTIVE", "HALT")
+EV_STATE, EV_FIELD, EV_RATE, EV_RX, EV_TX, EV_ERR, EV_IRQ = range(7)
+LOG_SIZE = 256
+_BLIND = 12  # FIFO bytes read before the frame length is known: a Type 2 command plus its CRC
+_ERR_BITS = I_PAR | I_CRC | I_ERR2 | I_ERR1
 
 
 class Listener:
-    """NFC-A target with a fixed UID. Call start(), then poll() repeatedly."""
-
-    def __init__(
-        self,
-        rf: St25r3916,
-        uid: bytes,
-        atqa: int = 0x0044,
-        sak: int = 0x00,
-        on_frame: Callable[[bytes], bytes | None] | None = None,
-        log: Callable[[str], None] = print,
-    ) -> None:
-        if len(uid) not in (4, 7):
-            raise ValueError("UID must be 4 or 7 bytes")
+    def __init__(self, rf, target):
         self.rf = rf
-        self.uid = uid
-        self.atqa = atqa
-        self.sak = sak
-        self.on_frame = on_frame
-        self.log = log
+        self.target = target
         self.state = OFF
+        self.fields = 0
+        self.frames = 0
+        self.log = []
+        self.dropped = 0
         self._wakeup = False
-        self._bitrate = None
+        self._bitrate = -1  # 0 = 106 kbit/s, -1 unknown
         self._pending = 0
-        self.t0 = time.perf_counter()
 
-    # ---- helpers --------------------------------------------------
-    def _t(self) -> str:
-        return f"{(time.perf_counter() - self.t0) * 1000:9.1f} ms"
+    def set_target(self, target):
+        self.target = target
 
-    def _change(self, reg: int, value: int, mask: int) -> None:
-        self.rf.write_reg(reg, (self.rf.read_reg(reg) & ~mask & 0xFF) | (value & mask))
+    # ---- log ----------------------------------------------------------
+    def _log(self, kind, data=b""):
+        if len(self.log) >= LOG_SIZE:  # full: drop the oldest
+            del self.log[0]
+            self.dropped += 1
+        self.log.append((_us(), kind, bytes(data[:12]), len(data) > 12))
 
-    def _enable_irqs(self, bits: int) -> None:
-        """Unmask these interrupts (mask bit 0 = enabled)."""
+    def log_lines(self):
+        """The event log as text lines; empties it."""
+        lines = []
+        if self.dropped:
+            lines.append("(%d older events dropped)" % self.dropped)
+        t0 = self.log[0][0] if self.log else 0
+        for us, kind, data, more in self.log:
+            d = _diff(us, t0)
+            text = "%6d.%03d ms  " % (d // 1000, d % 1000)
+            if kind == EV_STATE:
+                text += "-> " + _STATE_NAMES[data[0]]
+            elif kind == EV_FIELD:
+                text += "reader field detected"
+            elif kind == EV_RATE:
+                text += "bit rate detected: 106 kbit/s"
+            else:
+                text += {EV_RX: "rx  ", EV_TX: "tx  ", EV_ERR: "rx error  ", EV_IRQ: "irq "}[kind]
+                text += "".join("%02X " % b for b in data)
+                if more:
+                    text += "..."
+            lines.append(text)
+        self.log = []
+        self.dropped = 0
+        return lines
+
+    # ---- helpers ------------------------------------------------------
+    def _change(self, reg, value, mask):
+        rf = self.rf
+        rf.write_reg(reg, (rf.read_reg(reg) & ~mask & 0xFF) | (value & mask))
+
+    def _enable_irqs(self, bits):  # interrupt mask registers: a 1 masks the interrupt
+        rf = self.rf
         for i in range(4):
-            reg = 0x16 + i
-            cur = self.rf.read_reg(reg)
-            self.rf.write_reg(reg, cur & ~((bits >> (8 * i)) & 0xFF) & 0xFF)
+            m = (bits >> (8 * i)) & 0xFF
+            if m:
+                rf.write_reg(REG_IRQ_MASK + i, rf.read_reg(REG_IRQ_MASK + i) & ~m & 0xFF)
 
-    def _disable_irqs(self, bits: int) -> None:
+    def _disable_irqs(self, bits):
+        rf = self.rf
         for i in range(4):
-            reg = 0x16 + i
-            cur = self.rf.read_reg(reg)
-            self.rf.write_reg(reg, cur | ((bits >> (8 * i)) & 0xFF))
+            m = (bits >> (8 * i)) & 0xFF
+            if m:
+                rf.write_reg(REG_IRQ_MASK + i, rf.read_reg(REG_IRQ_MASK + i) | m)
 
-    def _irq(self, bits: int) -> int:
-        """Read the interrupt registers (this clears them), keep what is not asked for."""
-        self._pending |= self.rf.read_irqs()
+    def _irq(self, bits):
+        """Reads (and clears) the chip's interrupt registers into _pending, returns the asked-for bits."""
+        self._pending |= int.from_bytes(self.rf.batch([("x", bytes([REG_IRQ_MAIN | OP_READ]), 4)])[0], "little")
         got = self._pending & bits
         self._pending &= ~got
         return got
 
-    # ---- set-up (start_emulation + configure_emulation_a) ---------
-    def start(self) -> None:
+    # ---- set-up (configure_emulation_a + start_emulation) -----------------
+    def start(self, uid, atqa=0x0044, sak=0x00):
+        """Puts the chip in target mode with the given 7-byte UID."""
         rf = self.rf
-        rf.init()  # leaves the chip in reader mode with the field on
+        rf.init()  # reader mode, field on
         rf.command(CMD_STOP)
         rf.clear_bits(REG_OP_CTRL, OP_CTRL_TX_EN)  # field off
-        # configure_emulation_a
         rf.write_reg(REG_MODE, 0xC8)  # target, NFC-A, bit rate detection
-        rf.write_reg(REG_PT_DEF, 0x5C)  # fdel 5, auto response for NFC-A only
-        rf.write_reg(0x19, 0x02)  # mask I_wu_ax
+        rf.write_reg(REG_PT_DEF, 0x5C)  # auto response for NFC-A only
+        rf.write_reg(REG_PT_MASK, 0x02)  # mask I_wu_ax
         rf.write_reg(REG_TIMER_EMV, 0x08)  # MRT step 512/fc
-        # load_config: PT memory A = UID(10, padded) ATQA(2, LE) SAK level 1..3
-        sak = self.sak
-        sak1 = (sak & ~0x04) if len(self.uid) == 4 else (sak | 0x04)
-        pt = bytes(self.uid).ljust(10, b"\x00") + bytes([self.atqa & 0xFF, self.atqa >> 8, sak1, sak & ~0x04, sak & ~0x04])
-        self._change(REG_AUX, 0x10 if len(self.uid) == 7 else 0x00, 0x30)
+
+        # PT memory A: UID(10, padded) ATQA(2, LE) SAK of level 1..3
+        pt = bytearray(15)
+        pt[0:7] = uid
+        pt[10] = atqa & 0xFF
+        pt[11] = atqa >> 8
+        pt[12] = sak | 0x04  # UID not complete after level 1 (7-byte UID)
+        pt[13] = sak & ~0x04 & 0xFF
+        pt[14] = sak & ~0x04 & 0xFF
+        self._change(REG_AUX, 0x10, 0x30)  # 7-byte UID
         rf.t.write(bytes([OP_LOAD_PT_A]) + pt)
-        # start_emulation
+
         self._change(REG_PT_DEF, PT_D_AC_AP2P | PT_D_212_424_1R, PT_D_AC_AP2P | PT_D_212_424_1R | PT_D_106_AC_A)
         self._change(REG_TIMER_EMV, 0x00, 0xE0)
         rf.set_bits(REG_TIMER_EMV, 0x08)
@@ -173,21 +208,41 @@ class Listener:
         rf.clear_bits(REG_ISO14443A, ISO_NO_TX_PAR | ISO_NO_RX_PAR | ISO_NFC_F0)
         rf.write_reg(REG_ANT_TUNE1, 0x00)
         rf.write_reg(REG_ANT_TUNE2, 0xFF)
-        for reg in (0x30, 0x31, 0x32, 0x33):
-            rf.write_space_b(reg, 0x00)  # over/undershoot protection off
+        for reg in range(0x30, 0x34):
+            rf.write_space_b(reg, 0x00)  # over/undershoot off
+        # ST's RFAL listen set-up: answer with the chip's internal load modulation (AUX_MOD in register
+        # space B: lm_dri on, lm_ext off). The reader-mode init does not touch it.
+        aux_mod = rf.read_space_b(0x28)
+        rf.write_space_b(0x28, (aux_mod & ~0x20 & 0xFF) | 0x10)
+        after = rf.read_space_b(0x28)
         rf.command(CMD_UNMASK_RX)
+        self.log = []
+        self.dropped = 0
+        self.fields = self.frames = 0
+        self._log(EV_IRQ, bytes([aux_mod, after]))  # AUX_MOD before and after the change above
         self._goto_off()
 
-    # ---- state transitions ----------------------------------------
-    def _goto_off(self) -> None:
+    def stop(self):
+        """Back to reader mode."""
         rf = self.rf
-        self.log(f"{self._t()}  -> OFF")
-        self.state = OFF
+        rf.command(CMD_STOP)
+        rf.init()
+        rf.field_off()  # init() leaves the reader field on, which makes a phone nearby open Wallet
+
+    # ---- state transitions ------------------------------------------------
+    def _state(self, s):
+        self._log(EV_STATE, bytes([s]))
+        self.state = s
+
+    def _goto_off(self):
+        rf = self.rf
+        self._state(OFF)
+        self.target.reset()
         self._wakeup = False
-        self._bitrate = None
+        self._bitrate = -1
         rf.command(CMD_STOP)
         rf.set_bits(REG_OP_CTRL, OP_CTRL_RX_EN)
-        rf.clear_bits(REG_PT_DEF, PT_D_106_AC_A)  # enable auto response for NFC-A
+        rf.clear_bits(REG_PT_DEF, PT_D_106_AC_A)  # enable the automatic response for NFC-A
         rf.command(CMD_GO_TO_SENSE)
         rf.clear_bits(REG_ISO14443A, ISO_NFC_F0)
         rf._write_mask(0xFFFFFFFF)
@@ -201,22 +256,20 @@ class Listener:
         else:
             rf.clear_bits(REG_OP_CTRL, OP_CTRL_TX_EN | OP_CTRL_RX_EN | OP_CTRL_EN)
 
-    def _goto_idle(self) -> None:
+    def _goto_idle(self):
         rf = self.rf
-        self.log(f"{self._t()}  -> IDLE")
         was_active = self.state == ACTIVE
-        self.state = IDLE
+        self._state(IDLE)
         if not rf.read_reg(REG_OP_CTRL) & OP_CTRL_EN:
             rf.set_bits(REG_OP_CTRL, OP_CTRL_EN | OP_CTRL_RX_EN)
-            if not rf.read_reg(REG_AUX_DISPLAY) & 0x10:  # osc_ok
-                deadline = time.perf_counter() + 1.0
+            if not rf.read_reg(REG_AUX_DISPLAY) & AUX_OSC_OK:
+                t0 = _us()
                 ok = False
-                while time.perf_counter() < deadline:
+                while _diff(_us(), t0) < 1000000:
                     if self._irq(I_OSC):
                         ok = True
                         break
                 if not ok:
-                    self.log("oscillator not ready")
                     return self._goto_off()
         else:
             self._irq(I_OSC)
@@ -228,132 +281,163 @@ class Listener:
         rf.command(CMD_UNMASK_RX)
         self._wakeup = False
 
-    def _goto_ready(self) -> None:
+    def _goto_ready(self):
         rf = self.rf
-        self.log(f"{self._t()}  -> READY (selected by the reader, wakeup={self._wakeup})")
-        self.state = READY
+        self._state(READY)
         if self._irq(I_EOF):
             return self._goto_off()
         rf.clear_bits(REG_AUX, AUX_NO_CRC_RX)
-        rf.write_reg(0x04, (self._bitrate or 0) << 4 | (self._bitrate or 0))
-        rf.clear_bits(REG_OP_CTRL, 0x04)  # wu off
+        rf.write_reg(REG_BIT_RATE, 0x00)  # 106 kbit/s both ways
+        rf.clear_bits(REG_OP_CTRL, OP_CTRL_WU)
         rf.write_reg(REG_MODE, 0x88)  # target, NFC-A, fixed bit rate
 
-    def _goto_active(self) -> None:
-        self.log(f"{self._t()}  -> ACTIVE")
-        self.state = ACTIVE
-        self.rf.set_bits(REG_PT_DEF, PT_D_106_AC_A)  # stop auto response, we answer from now on
+    def _goto_active(self):
+        self._state(ACTIVE)
+        self.rf.set_bits(REG_PT_DEF, PT_D_106_AC_A)  # stop the automatic response: we answer from now on
         self._irq(I_PAR | I_CRC | I_ERR2 | I_ERR1)
         self._enable_irqs(I_RXE)
 
-    def _goto_halt(self) -> None:
+    def _goto_halt(self):
         rf = self.rf
-        self.log(f"{self._t()}  -> HALT")
-        self.state = HALT
+        self._state(HALT)
         rf.clear_bits(REG_PT_DEF, PT_D_106_AC_A)
         rf.command(CMD_GO_TO_SLEEP)
         self._change(REG_MODE, 0xC8, 0xFB)
         rf.clear_bits(REG_ISO14443A, ISO_NFC_F0)
         rf.command(CMD_UNMASK_RX)
         self._enable_irqs(I_NFCT | I_RXS | I_CRC | I_ERR1 | I_ERR2 | I_PAR | I_EON | I_EOF | MODE_IRQ)
-        if not self.rf.read_reg(REG_AUX_DISPLAY) & AUX_EFD_O:
+        if not rf.read_reg(REG_AUX_DISPLAY) & AUX_EFD_O:
             self._goto_off()
 
-    # ---- the polling step -----------------------------------------
-    def poll(self) -> None:
-        {OFF: self._p_off, IDLE: self._p_idle, READY: self._p_ready, ACTIVE: self._p_active, HALT: self._p_halt}[self.state]()
+    # ---- polling ------------------------------------------------------------
+    def poll(self):
+        """One step of the state machine; call it back to back."""
+        s = self.state
+        if s == ACTIVE:
+            self._p_active()
+        elif s == OFF:
+            self._p_off()
+        elif s == IDLE:
+            self._p_idle()
+        elif s == READY:
+            self._p_ready()
+        else:
+            self._p_halt()
 
-    def _read_bitrate(self) -> None:
-        br = (self.rf.read_reg(REG_BITRATE_DETECT) >> 4) & 0x03
-        self._bitrate = min(br, 2)
-        self.log(f"{self._t()}  bit rate detected: {(106, 212, 424)[self._bitrate]} kbit/s")
+    def _read_bitrate(self):
+        self._bitrate = min((self.rf.read_reg(REG_BITRATE_DETECT) >> 4) & 0x03, 2)
+        self._log(EV_RATE)
 
-    def _p_off(self) -> None:
+    def _read_frame(self, cap):
+        rf = self.rf
+        n = min(rf.fifo_count(), cap)
+        return rf.read_fifo(n) if n else b""
+
+    def _p_off(self):
         if self._irq(I_EON):
-            self.log(f"{self._t()}  external field detected")
+            self.fields += 1
+            self._log(EV_FIELD)
             self._goto_idle()
 
-    def _p_idle(self) -> None:
-        irq = self._irq(I_NFCT | I_RXE | I_EOF | I_RXE_PTA)
-        if not irq:
+    def _p_idle(self):
+        got = self._irq(I_NFCT | I_RXE | I_EOF | I_RXE_PTA)
+        if not got:
             return
-        if irq & I_NFCT:
+        if got & I_NFCT:
             self._read_bitrate()
-        if irq & I_EOF:
+        if got & I_EOF:
             return self._goto_off()
-        if irq & I_RXE and self._bitrate is not None:
-            more = self._irq(I_RXE | I_EOF | I_CRC | I_PAR | I_ERR2 | I_ERR1)
-            frame = self._read_frame()
-            self.log(f"{self._t()}  idle rx (anticollision frame seen by the chip): {frame.hex(' ')}  irq={irq | more:08X}")
-            self.rf.command(CMD_CLEAR_FIFO)
-            self.rf.command(CMD_UNMASK_RX)
+        rf = self.rf
+        if got & I_RXE and self._bitrate >= 0:
+            self._irq(I_RXE | I_EOF | I_CRC | I_PAR | I_ERR2 | I_ERR1)
+            self._log(EV_RX, self._read_frame(32))  # a frame the chip did not answer by itself
+            rf.command(CMD_CLEAR_FIFO)
+            rf.command(CMD_UNMASK_RX)
             return
-        if irq & I_RXE_PTA and self._bitrate == 0:
-            pta = self.rf.read_reg(REG_PT_DISPLAY)
-            self.log(f"{self._t()}  passive target state {pta & 0x0F:#x}")
-            if (pta & 0x0F) > PTA_IDLE:
+        if got & I_RXE_PTA and self._bitrate == 0:
+            if rf.read_reg(REG_PT_DISPLAY) & 0x0F > PTA_IDLE:
                 self._goto_ready()
 
-    def _p_ready(self) -> None:
-        irq = self._irq(I_EOF | (I_WU_AX if self._wakeup else I_WU_A))
-        if not irq:
+    def _p_ready(self):
+        got = self._irq(I_EOF | (I_WU_AX if self._wakeup else I_WU_A))
+        if not got:
             return
-        if irq & I_EOF:
+        if got & I_EOF:
             return self._goto_off()
         self._goto_active()
 
-    def _read_frame(self) -> bytes:
-        s1, s2 = self.rf.read_regs(REG_FIFO_STATUS1, 2)
-        n = s1 | ((s2 & 0xC0) << 2)
-        return self.rf.read_fifo(n) if n else b""
-
-    def _p_active(self) -> None:
-        irq = self._irq(I_EOF | I_RXE)
-        if not irq:
+    def _p_active(self):
+        got = self._irq(I_EOF | I_RXE)
+        if not got:
             return
-        if irq & I_EOF:
+        if got & I_EOF:
             return self._goto_off()
-        if irq & I_RXE:
-            irq |= self._irq(I_PAR | I_CRC | I_ERR2 | I_ERR1)
-            raw = self._read_frame()
-            if irq & I_ERRORS or len(raw) <= 2:
-                self.log(f"{self._t()}  rx error irq={irq:08X} raw={raw.hex(' ')}")
-                self.rf.command(CMD_CLEAR_FIFO)
-                self.rf.command(CMD_UNMASK_RX)
-                return self._goto_halt() if self._wakeup else self._goto_idle()
-            frame = raw[:-2]
-            self.log(f"{self._t()}  rx  {frame.hex(' ')}")
-            reply = self.on_frame(frame) if self.on_frame else None
-            if reply is not None:
-                self.transmit(reply)
-            # HLTA ends the session: 50 00 + CRC
-            if frame[:2] == b"\x50\x00":
-                self._disable_irqs(I_RXE)
-                self._goto_halt()
-
-    def transmit(self, data: bytes) -> None:
         rf = self.rf
-        rf.command(CMD_CLEAR_FIFO)
-        rf.load_fifo(data)
-        rf.write_reg(REG_NUM_TX1, (len(data) << 3) >> 8)
-        rf.write_reg(REG_NUM_TX2, (len(data) << 3) & 0xFF)
-        rf.command(CMD_TX_WITH_CRC)
-        self.log(f"{self._t()}  tx  {data.hex(' ')}")
+        # One USB round trip for what follows the interrupt: the error flags, the FIFO count and the first
+        # _BLIND FIFO bytes. The FIFO read is blind (before the count is known); a short frame just
+        # leaves the end of the read unused, and a longer one needs a second read.
+        irqs, status, head = rf.batch([
+            ("x", bytes([REG_IRQ_MAIN | OP_READ]), 4),
+            ("x", bytes([REG_FIFO_STATUS1 | OP_READ]), 2),
+            ("x", bytes([OP_FIFO_READ]), _BLIND),
+        ])
+        # error flags may have arrived with the interrupt just read (they sit in _pending) or since
+        self._pending |= int.from_bytes(irqs, "little")
+        got |= self._pending & _ERR_BITS
+        self._pending &= ~_ERR_BITS
+        n = min(status[0] | (status[1] & 0xC0) << 2, 272)  # up to a 256-byte ISO-DEP frame plus CRC
+        raw = head[:n] if n <= _BLIND else head + rf.read_fifo(n - _BLIND)
+        if got & I_ERRORS or len(raw) <= 2:
+            self._log(EV_ERR, raw)
+            rf.command(CMD_CLEAR_FIFO)
+            rf.command(CMD_UNMASK_RX)
+            return self._goto_halt() if self._wakeup else self._goto_idle()
+        frame = raw[:-2]  # CRC_A stays in the FIFO
+        self.frames += 1
+        reply, nibble, halt = self.target.handle(frame)
+        if reply is not None or nibble >= 0:
+            self._transmit(reply, nibble)  # answer first, log afterwards
+        self._log(EV_RX, frame)
+        if halt:
+            self._disable_irqs(I_RXE)
+            self._goto_halt()
 
-    def _p_halt(self) -> None:
-        irq = self._irq(I_NFCT | I_RXE | I_EOF | I_RXE_PTA)
-        if not irq:
+    def _transmit(self, reply, nibble):
+        """The whole reply as one batch: clear the FIFO, load it, set the length, start the transmission."""
+        if reply is None:  # 4-bit ACK/NAK frame, no CRC
+            self.rf.batch([
+                ("w", bytes([CMD_CLEAR_FIFO])),
+                ("w", bytes([OP_FIFO_LOAD, nibble])),
+                ("w", bytes([REG_NUM_TX1, 0x00])),
+                ("w", bytes([REG_NUM_TX2, 4])),  # 0 bytes, 4 bits
+                ("w", bytes([CMD_TX_WITHOUT_CRC])),
+            ])
+            self._log(EV_TX, bytes([nibble]))
             return
-        if irq & I_NFCT:
+        n = len(reply)
+        self.rf.batch([
+            ("w", bytes([CMD_CLEAR_FIFO])),
+            ("w", bytes([OP_FIFO_LOAD]) + bytes(reply)),
+            ("w", bytes([REG_NUM_TX1, (n << 3) >> 8])),
+            ("w", bytes([REG_NUM_TX2, (n << 3) & 0xFF])),
+            ("w", bytes([CMD_TX_WITH_CRC])),
+        ])
+        self._log(EV_TX, reply)
+
+    def _p_halt(self):
+        got = self._irq(I_NFCT | I_RXE | I_EOF | I_RXE_PTA)
+        if not got:
+            return
+        if got & I_NFCT:
             self._read_bitrate()
-        if irq & I_EOF:
+        if got & I_EOF:
             return self._goto_off()
-        if irq & I_RXE and self._bitrate is not None:
-            self.rf.command(CMD_CLEAR_FIFO)
-            self.rf.command(CMD_UNMASK_RX)
+        rf = self.rf
+        if got & I_RXE and self._bitrate >= 0:
+            rf.command(CMD_CLEAR_FIFO)
+            rf.command(CMD_UNMASK_RX)
             return
-        if irq & I_RXE_PTA and self._bitrate == 0:
-            pta = self.rf.read_reg(REG_PT_DISPLAY)
-            if (pta & 0x0F) > PTA_HALT:
+        if got & I_RXE_PTA and self._bitrate == 0:
+            if rf.read_reg(REG_PT_DISPLAY) & 0x0F > PTA_HALT:
                 self._wakeup = True
                 self._goto_ready()
