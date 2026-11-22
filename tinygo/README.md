@@ -3,7 +3,7 @@
 Go firmware ([TinyGo](https://tinygo.org/)) for an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). It does the same two things as [`../arduino`](../arduino), over the Feather's one USB cable:
 
 - **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader, so `pyscard`, OpenSC and `pcsctest` work with it.
-- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`).
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `emulate`, `emu-dump`).
 
 ```
 Mac --USB: CCID reader + serial--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -77,6 +77,7 @@ Open the Feather's USB serial port at 115200 baud. The board waits 3 seconds aft
 | `nfc/ntag215.go` | Memory model, write guards with read-back, NDEF read and write. |
 | `nfc/isodep.go` | ISO 14443-4 block protocol: RATS, I-block framing, chaining, waiting-time extension, retries, deselect, plus the DESFire command wrapper. Ported from `../arduino/src/IsoDep.cpp` (itself a port of embassy-rs/rnfc) and tested against the ISO 14443-4 Annex B scenarios in `go test`. |
 | `nfc/ident.go` | NTAG `GET_VERSION`, `READ_SIG`, `READ_CNT`, the type names, and the NAK mapping for refused writes. |
+| `nfc/listener.go`, `nfc/target.go`, `nfc/type2tag.go`, `nfc/isodeptarget.go`, `nfc/apduapps.go`, `nfc/emulate.go` | Tag emulation (`emulate [S] [t2|t4|sniff]`, `emu-dump`): the chip's target-mode state machine, an NTAG215 model, an ISO-DEP target with a Type 4 NDEF app and an APDU sniffer. Ported from `../arduino/src` with the same tests in `go test`. Checked with an iPhone and NFC Tools on 21 Nov 2026: `t2` was identified as an NTAG215 and took a text record (22 frames answered); `t4` took a text record through the Type 4 NDEF file and the phone read it back (37 frames). `sniff` not run. |
 | `nfc/ndef.go` | NDEF text and URI records, TLV wrapper. |
 | `nfc/cli.go` | The serial command line (takes an `io.Writer`, so it runs on the host too). |
 | `nfc/backend.go` | Maps the pseudo-APDUs above onto the tag. |
