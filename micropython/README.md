@@ -1,6 +1,6 @@
 # micropython: USB NFC reader (PC/SC) and serial tool on a Feather RP2350
 
-MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader and a serial command line. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`. The board's USB serial port takes the same commands as the other variants (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`).
+MicroPython firmware that turns an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916) into a USB smart-card (CCID) reader and a serial command line. The Mac sees a standard PC/SC reader, so existing tools work with no custom software: `pyscard`, OpenSC, `pcsctest`, `system_profiler`. The board's USB serial port takes the same commands as the other variants (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `emulate`, `emu-dump`).
 
 ```
 Mac --USB (CCID / PC/SC + serial)--> Feather RP2350 --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -67,7 +67,7 @@ Open the board's USB serial port at 115200 baud (the reader and the console shar
 | `desfire` | Identifies a DESFire card (ISO 14443-4) without keys: ATS, `GET_VERSION` (hardware and software version, storage size, UID, production date) and `GET_APPLICATION_IDS`, with the status words. |
 | `cycles [N]` | N rounds of select and full dump (a full dump takes about 260 ms here). |
 
-The commands and their output are the same as in the other variants (see the shared interface in the top-level README); error texts for refused pages come from the Python driver and read differently. The commands share the chip with the PC/SC reader: a long command such as `cycles` delays PC/SC answers, and a command that selects the card resets the RF field. The REPL is not available while the reader runs, and Ctrl-C is switched off so a stray key cannot stop the reader.
+The commands and their output are the same as in the other variants (see the shared interface in the top-level README); error texts for refused pages come from the Python driver and read differently. The commands share the chip with the PC/SC reader: a long command such as `cycles` delays PC/SC answers, and a command that selects the card resets the RF field. `emulate [S] [t2|t4|sniff]` makes the board act as a tag instead (a phone can read and write it) and `emu-dump` shows what the phone wrote; the PC/SC reader does not answer while `emulate` runs, and any byte on the serial port ends it. Checked with an iPhone and NFC Tools on 21 Nov 2026: `t2` was identified as an NTAG215 and took a text record (24 frames answered); `t4` took a text record through the Type 4 NDEF file and the phone read it back (37 frames); `sniff` not run. One reply cycle of about ten I2C operations measures 1.7 ms from MicroPython, against the phone's roughly 5 ms. The REPL is not available while the reader runs, and Ctrl-C is switched off so a stray key cannot stop the reader.
 
 ### Commands (pseudo-APDUs)
 
@@ -116,7 +116,7 @@ Only one firmware can be on the Feather at a time. [`../arduino`](../arduino) bu
 | `ccid_reader.py` | USB CCID interface and the main loop. All NFC and I2C work runs in the loop, never in USB callbacks. |
 | `ccid_proto.py` | CCID message handling: slot status, power on and off, transfer blocks, parameters. Independent of USB and the chip. |
 | `nfc_backend.py` | Maps the pseudo-APDUs above onto the tag. |
-| `nfc/` | The ST25R3916 driver and tag layers: `transport.py` (`machine.I2C`), `st25r3916.py`, `nfca.py`, `ntag215.py`, `ndef.py`. |
+| `nfc/` | The ST25R3916 driver and tag layers: `transport.py` (`machine.I2C`), `st25r3916.py`, `nfca.py`, `ntag215.py`, `ndef.py`; tag emulation: `listener.py` (the chip's target-mode state machine), `type2tag.py` (an NTAG215), `isodeptarget.py` (ISO-DEP), `apduapps.py` (Type 4 NDEF app and an APDU sniffer). Ported from `../arduino/src`. |
 | `run_reader.py` | Starts the reader from RAM, without `main.py`. |
 | `nfc_check.py` | Hardware check over the REPL. |
 | `host_check.py`, `pcsc_check.py`, `pcsc_monitor.py`, `pcsc_ndef_roundtrip.py` | Mac-side PC/SC scripts, below. |
