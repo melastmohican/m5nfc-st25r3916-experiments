@@ -3,7 +3,7 @@
 C++ firmware for [Zephyr](https://zephyrproject.org/) on an Adafruit Feather RP2350 and an M5Stack NFC Universal Unit (ST25R3916). Over the Feather's USB cable it does two things at once, like the other Feather folders:
 
 - **A USB smart-card (CCID) reader.** The Mac sees a standard PC/SC reader. Zephyr has no CCID class, so `src/ccid_class.c` is a small custom one.
-- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`).
+- **A serial command line** (`chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `emulate`, `emu-dump`).
 
 ```
 Mac --USB: CCID reader + serial--> Feather RP2350 (Zephyr) --I2C (Qwiic)--> M5Stack NFC unit --13.56 MHz--> NTAG215 tag
@@ -15,6 +15,7 @@ Mac --USB: CCID reader + serial--> Feather RP2350 (Zephyr) --I2C (Qwiic)--> M5St
 |---|---|
 | Chip, NFC-A, NTAG215, NDEF, `ident`, ISO-DEP, `desfire`, serial CLI | Works. Same source as `arduino/` (copied, see below). |
 | USB CCID reader, PC/SC APDUs | Works on the Mac. macOS lists the reader with the standard ATR; `FF CA`, `FF B0`, the `ident` APDUs and the lock-page refusal (`69 82`) answer as in `arduino/`; DESFire pass-through gives ATR `3B 81 80 01 80 80`, `GET_VERSION` with its two additional frames, and the 3 application IDs; insert and remove events arrive. |
+| Tag emulation (`emulate [S] [t2|t4|sniff]`, `emu-dump`) | Works with an iPhone and NFC Tools (21 Nov 2026). `t2`: identified as an NTAG215, wrote a text record, `emu-dump` decoded it; 29 frames answered. `t4`: the phone wrote a text record to the Type 4 NDEF file (4 updates) and read it back; 74 frames answered. `sniff` not run. |
 | Serial checks on hardware | `chip`, `detect`, `dump` (all 135 pages), `read-ndef`, `write-ndef` (9 pages, read back as written), `write-page` (page 100 written and verified, page 3 refused), `ident`, `cycles 50` (50/50, avg 161 ms) on an NTAG215; `detect` and `desfire` on an ORCA DESFire card. |
 | PC/SC writes and long reads | `FF D6` writes page 101 and `FF B0` reads it back; `FF D6` to page 3 is refused with `69 82`; `FF B0` with `Le` = 255 returns 255 bytes. |
 | Not checked on hardware yet | A phone reading the NDEF, and running with the reader and the serial port both busy at once. |
@@ -82,7 +83,7 @@ The Feather also shows up as a serial port (`/dev/cu.usbmodem*`). Open it at any
 screen /dev/cu.usbmodem* 115200
 ```
 
-The commands and their output are the same as in [`arduino/`](../arduino/README.md): `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `help`. Every command ends with `ok` or `error: <reason>`. `ident` and `cycles` are for NTAG tags; a DESFire card refuses them.
+The commands and their output are the same as in [`arduino/`](../arduino/README.md): `chip`, `detect`, `dump`, `read-ndef`, `write-ndef`, `write-page`, `ident`, `desfire`, `cycles`, `emulate`, `emu-dump`, `help`. Every command ends with `ok` or `error: <reason>`. `ident` and `cycles` are for NTAG tags; a DESFire card refuses them.
 
 ## Tests
 
