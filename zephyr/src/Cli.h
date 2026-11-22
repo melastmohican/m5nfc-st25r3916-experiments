@@ -3,19 +3,27 @@
 //   write-ndef [--text "..."] [--lang en] [--uri https://...]
 //   write-page <page> <8 hex digits> [--force]
 //   cycles [N]      N x (select + full dump, compared with the first dump); default 50
+//   emulate [S] [t2|t4|sniff]   act as an NFC-A tag (UID 04112233445566) for S seconds (default 30)
+//                   or until any byte arrives on the serial port: t2 = NTAG215 (default), t4 = NFC Forum
+//                   Type 4 NDEF tag (ISO-DEP), sniff = ISO-DEP card that logs every APDU and answers 90 00,
+//                   then print the event log and the memory the reader wrote; emu-dump prints it again
 //   help
 // Every command ends with a line "ok" or "error: <reason>", so scripts know when it is done.
 #pragma once
 #include "Io.h"
 
+#include "ApduApps.h"
+#include "IsoDepTarget.h"
+#include "Listener.h"
 #include "Ntag215.h"
 #include "St25r3916.h"
+#include "Type2Tag.h"
 
 namespace nfc {
 
 class Cli {
  public:
-  Cli(Io& io, St25r3916& rf) : io_(io), rf_(rf), tag_(rf) {}
+  Cli(Io& io, St25r3916& rf);
   void poll();  // call from loop(): reads available characters, runs a command per complete line
 
  private:
@@ -32,12 +40,22 @@ class Cli {
   int cmdIdent();
   int cmdDesfire();
   int cmdCycles(int argc, char** argv);
+  int cmdEmulate(int argc, char** argv);
+  int cmdEmuDump();
+  void dumpApdus();
   void help();
   int select(Card& card);
 
   Io& io_;
   St25r3916& rf_;
   Ntag215 tag_;
+  Type2Tag emuTag_;
+  Type4NdefApp t4App_;
+  IsoDepTarget t4Target_;
+  SniffApp sniffApp_;
+  IsoDepTarget sniffTarget_;
+  Listener listener_;
+  enum EmuMode : uint8_t { EMU_NONE, EMU_T2, EMU_T4, EMU_SNIFF } emuMode_ = EMU_NONE;
   char line_[LINE_MAX];
   size_t len_ = 0;
 };

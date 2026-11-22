@@ -13,6 +13,10 @@ target_sources(app PRIVATE
   src/Ntag215.cpp
   src/Ndef.cpp
   src/IsoDep.cpp
+  src/Listener.cpp
+  src/Type2Tag.cpp
+  src/IsoDepTarget.cpp
+  src/ApduApps.cpp
   src/Cli.cpp
   src/CcidProto.cpp
   src/NfcBackend.cpp

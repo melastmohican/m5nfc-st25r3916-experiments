@@ -144,8 +144,32 @@ void St25r3916::command(uint8_t cmd, const uint8_t* payload, size_t len, uint32_
   if (delayMs) t_.sleepMs(delayMs);
 }
 
+size_t St25r3916::readFifo(uint8_t* out, size_t n) {
+  size_t got = 0;
+  while (got < n) {
+    size_t chunk = n - got > 64 ? 64 : n - got;
+    uint8_t op = OP_FIFO_READ;
+    if (!t_.exchange(&op, 1, out + got, chunk)) {
+      ioError_ = true;
+      break;
+    }
+    got += chunk;
+  }
+  return got;
+}
+void St25r3916::writePtMemoryA(const uint8_t* data, size_t len) {
+  uint8_t b[17];
+  if (len > sizeof(b) - 1) {
+    ioError_ = true;
+    return;
+  }
+  b[0] = 0xA0;  // load PT memory A config
+  for (size_t i = 0; i < len; i++) b[1 + i] = data[i];
+  if (!t_.write(b, 1 + len)) ioError_ = true;
+}
+
 void St25r3916::loadFifo(const uint8_t* data, size_t len) {
-  uint8_t b[65];
+  uint8_t b[257];  // an ISO-DEP reply can be up to 256 bytes
   if (len > sizeof(b) - 1) {
     ioError_ = true;
     return;

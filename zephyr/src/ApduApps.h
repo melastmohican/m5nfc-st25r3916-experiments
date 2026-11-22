@@ -1,0 +1,82 @@
+// Applications for the ISO-DEP target (IsoDepTarget.h). No hardware, host-tested.
+//
+//   Type4NdefApp  an NFC Forum Type 4 tag: SELECT the NDEF application (D2760000850101), the
+//                 capability container E103 and the NDEF file E104, READ BINARY and UPDATE BINARY.
+//   SniffApp      records every APDU in full. Class 00 commands (SELECT, READ BINARY) are served
+//                 by a real Type 4 NDEF tag, so the phone's own background tag reader finishes
+//                 instead of looping; everything else gets 90 00, so an app that sends a vendor
+//                 protocol (for example F0 D2 image packets) keeps talking.
+#pragma once
+#include <stddef.h>
+#include <stdint.h>
+
+#include "IsoDepTarget.h"
+
+namespace nfc {
+
+class Type4NdefApp : public ApduApp {
+ public:
+  static constexpr size_t NDEF_FILE_SIZE = 1024;  // NLEN (2 bytes) + message
+  static constexpr size_t MAX_READ = 0xF0;        // MLe / MLc announced in the capability container
+
+  Type4NdefApp();
+  size_t apdu(const uint8_t* cmd, size_t n, uint8_t* resp, size_t cap) override;
+  void reset() override { selected_ = NONE; }
+
+  const uint8_t* ndefFile() const { return ndef_; }  // NLEN + message
+  size_t updateCount() const { return updates_; }
+
+ private:
+  enum Selected : uint8_t { NONE, APP, CC, NDEF_FILE };
+  uint8_t cc_[15];
+  uint8_t ndef_[NDEF_FILE_SIZE];
+  Selected selected_ = NONE;
+  bool appSelected_ = false;
+  size_t updates_ = 0;
+};
+
+class SniffApp : public ApduApp {
+ public:
+  static constexpr size_t CAPTURE_SIZE = 16384;
+
+  // After a screen refresh (F0 D4) the first kBusyPolls busy queries (F0 DE) answer "busy" (01),
+  // like a real panel that needs a second or two; then "idle" (00).
+  static constexpr int kBusyPolls = 3;
+
+  // A real e-paper board answers the refresh command (F0 D4) with S(WTX) "wait longer" requests,
+  // five of them in the Flipper Zero app's model of a Good Display board, then 90 00.
+  static constexpr int kRefreshWtxRequests = 5;
+
+  size_t apdu(const uint8_t* cmd, size_t n, uint8_t* resp, size_t cap) override;
+  int takeWtxRequests() override {
+    int w = wtx_;
+    wtx_ = 0;
+    return w;
+  }
+  void reset() override {
+    sessions_++;
+    ndef_.reset();
+    wtx_ = 0;
+  }
+
+  // The capture is a list of records: [1 = command, 2 = response][length hi][length lo][bytes].
+  const uint8_t* capture() const { return buf_; }
+  size_t captureSize() const { return used_; }
+  size_t apduCount() const { return apdus_; }
+  size_t sessionCount() const { return sessions_; }
+  bool full() const { return full_; }
+  void clear() { used_ = apdus_ = sessions_ = 0; busyLeft_ = wtx_ = 0; full_ = false; }
+
+ private:
+  void record(uint8_t kind, const uint8_t* data, size_t n);
+  Type4NdefApp ndef_;
+  uint8_t buf_[CAPTURE_SIZE];
+  size_t used_ = 0;
+  size_t apdus_ = 0;
+  size_t sessions_ = 0;
+  int busyLeft_ = 0;
+  int wtx_ = 0;
+  bool full_ = false;
+};
+
+}  // namespace nfc
