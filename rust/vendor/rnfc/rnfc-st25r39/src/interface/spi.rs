@@ -76,6 +76,10 @@ impl<T: SpiDevice> Interface for SpiInterface<T> {
         self.spi.transaction(&mut [Operation::Write(&[0x9f]), Operation::Read(data)])
     }
 
+    fn write_pt_memory_a(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        self.spi.transaction(&mut [Operation::Write(&[0xA0]), Operation::Write(data)])
+    }
+
     fn write_fifo(&mut self, data: &[u8]) -> Result<(), Self::Error> {
         self.spi.transaction(&mut [Operation::Write(&[0x80]), Operation::Write(data)])
     }

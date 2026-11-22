@@ -797,6 +797,11 @@ pub struct Raw<'a, I: Interface, IrqPin: InputPin + Wait> {
 }
 
 impl<'a, I: Interface, IrqPin: InputPin + Wait> Raw<'a, I, IrqPin> {
+    /// Local patch (tag emulation): the bus interface, for code that drives the chip directly. The
+    /// driver's own cached state is not updated, so call `field_on` or `field_off` afterwards.
+    pub fn interface(&mut self) -> &mut I {
+        &mut self.inner.iface
+    }
     pub async fn field_on(&mut self) -> Result<(), FieldOnError<I::Error>> {
         self.inner.mode_on().await?;
         self.inner.field_on().await?;

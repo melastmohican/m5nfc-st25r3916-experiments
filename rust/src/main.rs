@@ -17,6 +17,7 @@ use rnfc_st25r39::{I2cInterface, Interface, St25r39};
 mod backend;
 mod class;
 mod cli;
+mod emulate;
 mod isodep;
 mod nfc;
 use static_cell::StaticCell;

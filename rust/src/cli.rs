@@ -19,17 +19,18 @@ pub const PAGE_COUNT: usize = 135;
 const CC_NTAG215: [u8; 4] = [0xE1, 0x10, 0x3E, 0x00];
 
 pub struct Cli {
-    cdc: Cdc,
+    pub(crate) cdc: Cdc,
     ident: Option<u8>,
     rf: &'static SharedRf,
+    pub(crate) emu: crate::emulate::EmuState,
 }
 
 impl Cli {
     pub fn new(cdc: Cdc, ident: Option<u8>, rf: &'static SharedRf) -> Self {
-        Self { cdc, ident, rf }
+        Self { cdc, ident, rf, emu: crate::emulate::EmuState::new() }
     }
 
-    async fn write(&mut self, data: &[u8]) -> Result<(), EndpointError> {
+    pub(crate) async fn write(&mut self, data: &[u8]) -> Result<(), EndpointError> {
         for chunk in data.chunks(64) {
             self.cdc.write_packet(chunk).await?;
         }
@@ -39,7 +40,7 @@ impl Cli {
         Ok(())
     }
 
-    async fn print(&mut self, args: core::fmt::Arguments<'_>) {
+    pub(crate) async fn print(&mut self, args: core::fmt::Arguments<'_>) {
         let mut s: String<160> = String::new();
         let _ = s.write_fmt(args);
         let _ = self.write(s.as_bytes()).await;
@@ -86,6 +87,8 @@ impl Cli {
             "ident" => self.ident(rf).await,
             "desfire" => self.desfire(rf).await,
             "cycles" => self.cycles(rf, argv.get(1).copied()).await,
+            "emulate" => self.emulate(rf, &argv[1..]).await,
+            "emu-dump" => self.emu_dump().await,
             "bootsel" => {
                 // Reboot into the RP2350 bootloader so `picotool load` works without the button.
                 self.print(format_args!("rebooting to BOOTSEL\r\n")).await;
@@ -94,7 +97,7 @@ impl Cli {
                 Ok(())
             }
             "help" => {
-                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | bootsel | help\r\n")).await;
+                self.print(format_args!("commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\r\n          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] [t2|t4|sniff] | emu-dump | bootsel | help\r\n")).await;
                 Ok(())
             }
             other => {
@@ -279,7 +282,7 @@ impl Cli {
     /// ISO-DEP plus DESFire GET_VERSION and GET_APPLICATION_IDS: what the card reveals without keys.
     async fn desfire(&mut self, rf: &mut Rf) -> Result<(), NfcError> {
         let i = nfc::desfire_info(rf).await?;
-        let mut hex = |s: &mut String<96>, b: &[u8]| {
+        let hex = |s: &mut String<96>, b: &[u8]| {
             for (n, x) in b.iter().enumerate() {
                 let _ = write!(s, "{}{:02X}", if n > 0 { " " } else { "" }, x);
             }

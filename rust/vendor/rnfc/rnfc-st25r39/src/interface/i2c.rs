@@ -67,6 +67,24 @@ where
         self.i2c.write_read(self.address, &[0x9F], data)
     }
 
+    fn read_regs(&mut self, reg: u8, out: &mut [u8]) -> Result<(), Self::Error> {
+        if reg as usize + out.len() <= 0x40 {
+            // Register space A auto-increments
+            return self.i2c.write_read(self.address, &[0x40 | reg], out);
+        }
+        for (i, b) in out.iter_mut().enumerate() {
+            *b = self.read_reg(reg + i as u8)?;
+        }
+        Ok(())
+    }
+
+    fn write_pt_memory_a(&mut self, data: &[u8]) -> Result<(), Self::Error> {
+        let mut buf = [0u8; 17];
+        buf[0] = 0xA0;
+        buf[1..][..data.len()].copy_from_slice(data);
+        self.i2c.write(self.address, &buf[..1 + data.len()])
+    }
+
     fn write_fifo(&mut self, data: &[u8]) -> Result<(), Self::Error> {
         let mut buf = [0u8; 512 + 1];
         buf[0] = 0x80;
