@@ -28,9 +28,11 @@ except AttributeError:  # CPython (host tests)
 
 HELP = (
     "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n"
-    "          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help\n"
+    "          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] |\n"
+    "          emulate [S] [t2|t4|sniff] | emu-dump | help\n"
 )
 LINE_MAX = 200
+_EMU_UID = bytes([0x04, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66])
 
 
 def tokenize(line):
@@ -70,10 +72,12 @@ def _parse_hex4(text):
 
 
 class Cli:
-    def __init__(self, rf, write, link=RfIsoDepLink):
+    def __init__(self, rf, write, link=RfIsoDepLink, key_pressed=None):
         self.rf = rf
         self.write = write  # write(str)
         self._link = link  # builds the ISO-DEP link from the driver (replaceable in tests)
+        self._key_pressed = key_pressed  # returns True if a byte arrived on the serial port (and consumes it)
+        self._emu = None  # set by `emulate`, read by `emu-dump`
         self._line = ""
 
     # ---- input -------------------------------------------------------
@@ -102,6 +106,8 @@ class Cli:
             "ident": self._ident,
             "desfire": self._desfire,
             "cycles": self._cycles,
+            "emulate": self._emulate,
+            "emu-dump": self._emu_dump,
             "help": self._help,
         }.get(cmd)
         try:
@@ -275,3 +281,96 @@ class Cli:
             self.write("  %d error(s), last: %s\n" % (errors, last_err))
         if ok != n:
             raise NfcError("not all cycles succeeded")
+
+    # ---- tag emulation -----------------------------------------------
+    def _emulate(self, args):
+        """Act as a tag (UID 04112233445566). No output while it runs: a reader gives a tag about 5 ms."""
+        from nfc.apduapps import SniffApp, Type4NdefApp
+        from nfc.isodeptarget import IsoDepTarget
+        from nfc.listener import Listener
+        from nfc.type2tag import Type2Tag
+
+        seconds, mode = 30, "t2"
+        for a in args:
+            if a in ("t2", "t4", "sniff"):
+                mode = a
+            else:
+                try:
+                    seconds = int(a)
+                except ValueError:
+                    raise NfcError("bad parameter")
+        if not 1 <= seconds <= 600:
+            raise NfcError("bad parameter")
+        if mode == "t2":
+            app, target, sak, what = None, Type2Tag(_EMU_UID), 0x00, "an NTAG215"
+        elif mode == "t4":
+            app = Type4NdefApp()
+            target, sak, what = IsoDepTarget(app), 0x20, "a Type 4 NDEF tag"  # SAK 20: the reader sends RATS
+        else:
+            app = SniffApp()
+            target, sak, what = IsoDepTarget(app), 0x20, "an ISO-DEP card that logs every APDU"
+        # the line ending of this command (CR LF) must not count as the byte that ends the run
+        while self._key_pressed and self._key_pressed():
+            pass
+        listener = Listener(self.rf, target)
+        listener.start(_EMU_UID, 0x0044, sak)
+        self._emu = (mode, target, app, listener)
+        self.write("emulating %s, UID 04112233445566, for %d s: hold the phone to the unit (any byte ends it)\n"
+                   % (what, seconds))
+        t0 = _ticks()
+        spins = 0
+        while _diff(_ticks(), t0) < seconds * 1000:
+            listener.poll()
+            spins += 1
+            if spins & 0x3F == 0 and self._key_pressed and self._key_pressed():  # any byte ends it
+                break
+        listener.stop()
+        for line in listener.log_lines():
+            self.write(line + "\n")
+        text = "fields seen: %d, frames answered: %d" % (listener.fields, listener.frames)
+        if mode == "t2":
+            text += ", tag writes: %d" % target.writes
+        elif mode == "t4":
+            text += ", NDEF file updates: %d" % app.updates
+        else:
+            text += ", APDUs: %d, sessions: %d" % (app.apdus, app.sessions)
+        self.write(text + "\n")
+
+    def _emu_dump(self, args):
+        """What the last `emulate` run captured: the NTAG215 memory in the format of `dump` (t2), the
+        NDEF file (t4) or every APDU in full (sniff)."""
+        from nfc.type2tag import BYTES, PAGES
+
+        if self._emu is None:
+            self.write("nothing captured: run `emulate` first\n")
+            return
+        mode, target, app, _listener = self._emu
+        if mode == "sniff":
+            self.write("APDUs captured: %d in %d session(s)%s\n"
+                       % (app.apdus, app.sessions, " (capture buffer full, later APDUs lost)" if app.full else ""))
+            for kind, data in app.records:
+                self.write("%s %s\n" % ("C>" if kind == 1 else "R>", _hex_bytes(data)))
+            return
+        if mode == "t4":
+            f = app.ndef
+            nlen = f[0] << 8 | f[1]
+            self.write("NDEF file: NLEN = %d, %d update(s)\n" % (nlen, app.updates))
+            if nlen == 0 or nlen > len(f) - 2:
+                self.write("no NDEF message\n")
+                return
+            for i in range(0, nlen + 2, 16):
+                self.write("%04X  %s\n" % (i, _hex_bytes(f[i:min(i + 16, nlen + 2)])))
+            msg = bytes(f[2:2 + nlen])
+        else:
+            mem = target.memory()
+            for page in range(PAGES):
+                c = mem[page * 4:page * 4 + 4]
+                text = "".join(chr(x) if 32 <= x < 127 else "." for x in c)
+                self.write("%3d  %02X %02X %02X %02X  %s%s\n"
+                           % (page, c[0], c[1], c[2], c[3], text, "  (written)" if target.is_changed(page) else ""))
+            msg = ndef.find_message(bytes(mem[16:BYTES]))
+            if not msg:
+                self.write("no NDEF message\n")
+                return
+        for rec in ndef.decode_message(msg):
+            self.write(rec.describe() + "\n")

@@ -134,9 +134,10 @@ def run(rf):
 
     backend = NfcBackend(rf)
     dev = CcidInterface(cp.CcidSlot(backend))
-    cli = Cli(rf, sys.stdout.write)
     console = select.poll()
     console.register(sys.stdin, select.POLLIN)
+    # `emulate` ends when a byte arrives on the serial port; the byte is consumed here
+    cli = Cli(rf, sys.stdout.write, key_pressed=lambda: bool(console.poll(0)) and bool(sys.stdin.read(1)))
     micropython.kbd_intr(-1)  # Ctrl-C arrives as a character instead of raising KeyboardInterrupt
     usb_get().init(
         dev,
