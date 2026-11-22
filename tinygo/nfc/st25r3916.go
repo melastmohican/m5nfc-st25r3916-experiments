@@ -68,6 +68,9 @@ type ST25R3916 struct {
 	ioError bool
 	// fifoStatus2 is FIFO_STATUS2 as read by the last fifoCount(): fifo_lb is in bits 3:1.
 	fifoStatus2 byte
+	// scratch holds outgoing I2C frames, so the hot path (the tag emulation) allocates nothing: a
+	// garbage collection would eat into the 5 ms a phone gives a tag to answer.
+	scratch [262]byte
 }
 
 func New(t Transport) *ST25R3916 { return &ST25R3916{t: t, rxCRC: -1, nrt: -1} }
@@ -78,7 +81,8 @@ func (r *ST25R3916) TakeIOError() bool { e := r.ioError; r.ioError = false; retu
 // ---- raw access
 
 func (r *ST25R3916) ReadRegs(reg byte, out []byte) {
-	if !r.t.Exchange([]byte{reg | opRead}, out) {
+	r.scratch[0] = reg | opRead
+	if !r.t.Exchange(r.scratch[:1], out) {
 		r.ioError = true
 		for i := range out {
 			out[i] = 0
@@ -93,7 +97,8 @@ func (r *ST25R3916) ReadReg(reg byte) byte {
 }
 
 func (r *ST25R3916) WriteReg(reg, val byte) {
-	if !r.t.Write([]byte{reg, val}) {
+	r.scratch[0], r.scratch[1] = reg, val
+	if !r.t.Write(r.scratch[:2]) {
 		r.ioError = true
 	}
 }
@@ -103,14 +108,16 @@ func (r *ST25R3916) ClearBits(reg, mask byte) { r.WriteReg(reg, r.ReadReg(reg)&^
 
 func (r *ST25R3916) ReadSpaceB(reg byte) byte {
 	var v [1]byte
-	if !r.t.Exchange([]byte{cmdSpaceB, reg&0x3F | opRead}, v[:]) {
+	r.scratch[0], r.scratch[1] = cmdSpaceB, reg&0x3F|opRead
+	if !r.t.Exchange(r.scratch[:2], v[:]) {
 		r.ioError = true
 	}
 	return v[0]
 }
 
 func (r *ST25R3916) WriteSpaceB(reg, val byte) {
-	if !r.t.Write([]byte{cmdSpaceB, reg & 0x3F, val}) {
+	r.scratch[0], r.scratch[1], r.scratch[2] = cmdSpaceB, reg&0x3F, val
+	if !r.t.Write(r.scratch[:3]) {
 		r.ioError = true
 	}
 }
@@ -120,8 +127,9 @@ func (r *ST25R3916) command(cmd byte, payload []byte, delayMs uint32) {
 		r.ioError = true
 		return
 	}
-	b := append([]byte{cmd}, payload...)
-	if !r.t.Write(b) {
+	r.scratch[0] = cmd
+	n := 1 + copy(r.scratch[1:], payload)
+	if !r.t.Write(r.scratch[:n]) {
 		r.ioError = true
 	}
 	if delayMs != 0 {
@@ -130,11 +138,13 @@ func (r *ST25R3916) command(cmd byte, payload []byte, delayMs uint32) {
 }
 
 func (r *ST25R3916) loadFifo(data []byte) {
-	if len(data) > 64 {
+	if len(data) > 256 { // an ISO-DEP reply can be up to 256 bytes
 		r.ioError = true
 		return
 	}
-	if !r.t.Write(append([]byte{opFifoLoad}, data...)) {
+	r.scratch[0] = opFifoLoad
+	n := 1 + copy(r.scratch[1:], data)
+	if !r.t.Write(r.scratch[:n]) {
 		r.ioError = true
 	}
 }
@@ -436,4 +446,37 @@ func (r *ST25R3916) Transceive(tx, rx []byte, txCRC, rxCRC bool, timeoutMs uint3
 		}
 	}
 	return n, nil
+}
+
+// ---- FIFO and passive target memory, used by the tag emulation (listener.go)
+
+// readFifo drains len(out) bytes from the FIFO in chunks and returns how many were read.
+func (r *ST25R3916) readFifo(out []byte) int {
+	got := 0
+	for got < len(out) {
+		chunk := len(out) - got
+		if chunk > 64 {
+			chunk = 64
+		}
+		r.scratch[0] = opFifoRead
+		if !r.t.Exchange(r.scratch[:1], out[got:got+chunk]) {
+			r.ioError = true
+			break
+		}
+		got += chunk
+	}
+	return got
+}
+
+// writePtMemoryA loads the passive target memory: UID(10) ATQA(2) SAK(3).
+func (r *ST25R3916) writePtMemoryA(data []byte) {
+	if len(data) > 16 {
+		r.ioError = true
+		return
+	}
+	r.scratch[0] = 0xA0 // load PT memory A config
+	n := 1 + copy(r.scratch[1:], data)
+	if !r.t.Write(r.scratch[:n]) {
+		r.ioError = true
+	}
 }

@@ -18,10 +18,16 @@ func (r *ST25R3916) NowMs() uint32 { return r.t.NowMs() }
 type Cli struct {
 	Out io.Writer
 	RF  *ST25R3916
+	// In is the serial input (optional): any byte received ends `emulate`.
+	In ByteReader
+	// NowUs is a microsecond clock for the `emulate` event log (optional).
+	NowUs func() uint32
+
+	emu *emuState
 }
 
 const helpText = "commands: chip | detect | dump | read-ndef | write-ndef [--text T] [--lang L] [--uri U] |\n" +
-	"          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | help\n"
+	"          write-page <page> <8 hex> [--force] | ident | desfire | cycles [N] | emulate [S] [t2|t4|sniff] | emu-dump | help\n"
 
 // tokenize splits on whitespace; double quotes group words.
 func tokenize(line string) []string {
@@ -77,6 +83,10 @@ func (c *Cli) Run(line string) {
 		err = c.desfire()
 	case "cycles":
 		err = c.cycles(argv[1:])
+	case "emulate":
+		err = c.emulate(argv[1:])
+	case "emu-dump":
+		err = c.emuDump()
 	case "help":
 		io.WriteString(c.Out, helpText)
 	default:

@@ -37,7 +37,8 @@ func main() {
 		println("init: ok")
 		println("type 'help' for commands")
 	}
-	cli := &nfc.Cli{Out: machine.Serial, RF: rf}
+	cli := &nfc.Cli{Out: machine.Serial, RF: rf, In: machine.Serial,
+		NowUs: func() uint32 { return uint32(time.Now().UnixNano() / 1000) }}
 	nowMs := func() int64 { return time.Now().UnixNano() / 1e6 }
 	var line []byte
 	for {
