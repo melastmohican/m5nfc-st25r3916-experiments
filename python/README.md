@@ -175,7 +175,7 @@ Behaviour of the chip worth knowing:
 uv run --with pytest python -m pytest -q
 ```
 
-39 tests run the stack against a software fake chip (`tests/fakechip.py`) or a scripted card and need no hardware: the whole read and write path, `ident` with its NAK cases, the `cycles`, `detect` and `desfire` commands, and the ISO-DEP framing (every ISO 14443-4 Annex B scenario).
+50 tests run the stack against a software fake chip (`tests/fakechip.py`) or a scripted card and need no hardware: the whole read and write path, `ident` with its NAK cases, the `cycles`, `detect` and `desfire` commands, the ISO-DEP framing (every ISO 14443-4 Annex B scenario), the tag emulation state machine and the shape of the batched MPSSE commands. Run them with `uv run --with pytest python -m pytest -q tests`.
 
 On hardware (2026-11-14, NTAG215 and an ORCA DESFire card on the FT232H): `ident`, NDEF write and read, page writes and the refused-page guard, `cycles 50` (50 of 50 dumps at about 7.1 s each) and `desfire` all pass, with the same output as the Feather variants.
 
