@@ -53,7 +53,7 @@ uv run python -m nfc.cli <command>
 | `chip` | Checks that the ST25R3916 answers and prints its type and revision. |
 | `detect` | Finds a card and prints its UID, ATQA and SAK, and whether it is an NTAG215. |
 | `dump` | Prints all 135 pages (4 bytes each) as hex and ASCII. |
-| `read-ndef` | Decodes the NDEF message: text and URI records. |
+| `read-ndef` | Decodes the NDEF message: text and URI records. Reads a Type 2 tag (NTAG) by pages, or a Type 4 tag over ISO-DEP (it prints `Type 4 tag (ISO-DEP)` first); Python only for the Type 4 read. |
 | `write-ndef [--text T] [--lang L] [--uri U]` | Writes a text and/or URI record, replacing the current message. Pages that already match are skipped. |
 | `write-page <page> <8 hex digits> [--force]` | Writes one 4-byte page and reads it back to verify. |
 | `ident` | NTAG identification: `GET_VERSION`, `READ_SIG` and `READ_CNT` (NTAG21x datasheet 10.1, 10.8, 10.6). Prints the version bytes, the type, the signature and the counter, or `Counter: not readable (NAK)`. A tag that does not answer a command is selected again: if it still answers, the command is reported as refused. |

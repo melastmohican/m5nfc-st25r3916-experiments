@@ -5,7 +5,7 @@ import argparse
 import sys
 import time
 
-from . import ndef
+from . import ndef, type4
 from .ident import GET_VERSION, READ_CNT, READ_SIG, counter_value, ident, ntag_type_name
 from .isodep import IsoDep, RfIsoDepLink, desfire_command
 from .nfca import select_card
@@ -39,7 +39,7 @@ def cmd_detect(rf, args) -> None:
     print(f"UID:  {card.uid_hex}")
     print(f"ATQA: {card.atqa.hex().upper()}  SAK: 0x{card.sak:02X}")
     if card.sak & 0x20:  # SAK bit 6: the card speaks ISO 14443-4 and does not answer Type 2 READ
-        print("Type: ISO-DEP card (ISO 14443-4); try `desfire`")
+        print("Type: ISO-DEP card (ISO 14443-4); try `read-ndef` (Type 4 tag) or `desfire`")
         return
     print("Type: NTAG215" if Ntag215(rf).is_ntag215() else "Type: not an NTAG215 (CC differs)")
 
@@ -49,9 +49,21 @@ def cmd_dump(rf, args) -> None:
     _hexdump(Ntag215(rf).dump())
 
 
-def cmd_read_ndef(rf, args) -> None:
-    select_card(rf)
-    records = Ntag215(rf).read_ndef()
+def cmd_read_ndef(rf, args, link=RfIsoDepLink) -> None:
+    card = select_card(rf)
+    if card.sak & 0x20:  # ISO-DEP: a Type 4 tag (Type 2 READ does not work on it)
+        dep = IsoDep(link(rf))
+        dep.activate()
+        print("Type 4 tag (ISO-DEP)")
+        try:
+            records = ndef.decode_message(type4.read_ndef_message(dep))
+        finally:
+            try:
+                dep.deselect()
+            except NfcError:
+                pass  # the card is back at idle either way, or gone
+    else:
+        records = Ntag215(rf).read_ndef()
     if not records:
         print("no NDEF message")
     for rec in records:
@@ -170,7 +182,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("chip", help="check the ST25R3916 answers").set_defaults(fn=cmd_chip)
     sub.add_parser("detect", help="find a card, print UID/ATQA/SAK").set_defaults(fn=cmd_detect)
     sub.add_parser("dump", help="dump all 135 pages").set_defaults(fn=cmd_dump)
-    sub.add_parser("read-ndef", help="decode the NDEF message").set_defaults(fn=cmd_read_ndef)
+    sub.add_parser("read-ndef", help="decode the NDEF message (Type 2 or Type 4 tag)").set_defaults(fn=cmd_read_ndef)
     w = sub.add_parser("write-ndef", help="write text and/or URI records")
     w.add_argument("--text")
     w.add_argument("--lang", default="en")

@@ -65,7 +65,7 @@ Every command on the serial port ends with a line `ok` or `error: <reason>`.
 | `chip` | Checks that the ST25R3916 answers. | `ST25R3916 present: type=0x05 revision=2` |
 | `detect` | Finds a card. | `UID:  04:64:31:66:D3:2A:81`, `ATQA: 4400  SAK: 0x00`, then `Type: NTAG215`, or for an ISO-DEP card `Type: ISO-DEP card (ISO 14443-4); try desfire` |
 | `dump` | All 135 pages of an NTAG215. | one line per page: number, 4 hex bytes, ASCII |
-| `read-ndef` | Decodes the NDEF message. | `text[en]: hello`, `uri: https://example.com`, or `no NDEF message` |
+| `read-ndef` | Decodes the NDEF message. (Type 4 tags over ISO-DEP too, in `python/` only.) | `text[en]: hello`, `uri: https://example.com`, or `no NDEF message` |
 | `write-ndef [--text T] [--lang L] [--uri U]` | Writes text and/or URI records. | `wrote N page(s)` (pages that already match are skipped) |
 | `write-page <page> <8 hex> [--force]` | Writes one page and reads it back. | `page 20 = 52555354 (verified where readable)` |
 | `cycles [N]` | N rounds of select and full dump, compared with the first. | `50/50 cycles OK; per cycle avg 167 ms, max 168 ms` |
