@@ -96,26 +96,29 @@ A phone gives a tag about 5 ms to answer. This first failed through the FT232H b
 
 Checked with an iPhone and NFC Tools on 21 Nov 2026: `t2` was identified as an NTAG215 and took a text record (25 frames answered, 7 tag writes); `t4` took a text record through the Type 4 NDEF file and the phone read it back (37 frames). `sniff` not run. It needs a quiet USB bus: a macOS USB hiccup longer than a few milliseconds makes the phone drop the field.
 
-## Peer-to-peer: receive an NDEF message from another NFC device
+## Peer-to-peer: exchange an NDEF message with another NFC device
 
-The unit can also be the initiator of an NFC-DEP link (peer-to-peer) and receive an NDEF message over LLCP and SNEP. Two scripts in `tools/`:
+The unit can also be the initiator of an NFC-DEP link (peer-to-peer) and receive or send an NDEF message over LLCP and SNEP. Three scripts in `tools/`:
 
 ```
 uv run python tools/dep_probe.py [tries]            # link layer only
 uv run python tools/snep_receive.py [seconds] [--idle S]   # receive a SNEP Put and decode it
+uv run python tools/snep_send.py [text] [--uri URL] [--seconds S]   # send a SNEP Put
 ```
 
 `dep_probe.py` selects the peer like a Type A card (it must advertise NFC-DEP: SAK bit 6, `0x40`), sends `ATR_REQ`, prints the `ATR_RES`, then exchanges a few LLCP SYMM PDUs in `DEP_REQ` / `DEP_RES` and releases the link. It answers the peer's `S(RTOX)` timeout-extension requests; a peer whose host is slow asks for one on almost every exchange, and the next exchange fails if it is ignored.
 
 `snep_receive.py` adds an LLCP server: it answers a `CONNECT` to the SNEP service (`urn:nfc:sn:snep`, SAP 4) with `CC`, acknowledges `I` PDUs, answers a fragmented SNEP Put with Continue and a complete one with Success, answers `DISC` with `DM`, and decodes the NDEF message with `nfc.ndef`. If the peer sends only SYMM for `--idle` seconds (6 by default) it releases the link and starts again.
 
+`snep_send.py` is the other direction: an LLCP client. It sends a SYMM first to tell the peer's phase (a SNEP server answers SYMM, a SNEP client answers with its own CONNECT, and the script then releases and retries), sends `CONNECT` to the SNEP service by name, sends the NDEF message (a Text record, or a URI record with `--uri`) as one SNEP Put in one `I` PDU, polls with SYMM until the peer's Success arrives and acknowledges it with `RR`.
+
 **Peer used:** a PN532 module running the `p2p_raw` example of the Seeed PN532 Arduino library, which makes it an NFC-DEP target and a SNEP client. Hold its antenna against the unit. Phones are no use as a peer: Android Beam was removed from Android and iPhones do not do peer-to-peer.
 
-**Result** (22 Nov 2026, FT232H at 400 kHz): `dep_probe.py` printed the `ATR_RES` in 31.8 ms (peer response timeout about 155 ms, LLCP 1.0 general bytes) and four DEP exchanges. `snep_receive.py` printed `media text/plain: 'hello world'`, the 24-byte message in the sketch, on 2 of 2 runs. It takes about 20 s: `p2p_raw` alternates a write phase (the PN532 is the SNEP client and sends the CONNECT and the Put) and, after a 3 s delay, a read phase (the PN532 is a SNEP server and waits for the other side to CONNECT). The script only serves the write phase, so it releases and retries until it lands in it.
+**Result** (22 Nov 2026, FT232H at 400 kHz): `dep_probe.py` printed the `ATR_RES` in 31.8 ms (peer response timeout about 155 ms, LLCP 1.0 general bytes) and four DEP exchanges. `snep_receive.py` printed `media text/plain: 'hello world'`, the 24-byte message in the sketch, on 2 of 2 runs. It takes about 20 s: `p2p_raw` alternates a write phase (the PN532 is the SNEP client and sends the CONNECT and the Put) and, after a 3 s delay, a read phase (the PN532 is a SNEP server and waits for the other side to CONNECT). `snep_receive.py` only serves the write phase, so it releases and retries until it lands in it. `snep_send.py` needs the read phase and does the same: it printed `SNEP response 81 = Success` on attempt 1 and the PN532 printed `...T.enhello from the unit` on its serial port (a 26-byte Text record).
 
 Timing is easy as an initiator: the peer's response timeout comes in the `ATR_RES`, so the FT232H needs no batching here (the target role, as in "Acting as a tag", has the 5 ms limit).
 
-**Limits:** receive only (no SNEP client, so the PN532's read phase is not served); one peer, tested with a PN532 only; the packet bytes were checked offline for the CC, I and DM PDUs and a fragmented Put, but there are no host tests in `tests/` yet. The other folders do not have peer-to-peer.
+**Limits:** a Put that fits one `I` PDU when sending (the PN532 sketch reads 128 bytes; no fragmentation on send); one peer, tested with a PN532 only; the packet bytes were checked offline for the CC, I and DM PDUs and a fragmented Put, but there are no host tests in `tests/` yet. The other folders do not have peer-to-peer.
 
 ## Supported tags and limits
 
