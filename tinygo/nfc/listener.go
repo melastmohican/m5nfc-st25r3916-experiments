@@ -246,6 +246,9 @@ func (l *Listener) Start(uid [7]byte, atqa uint16, sak byte) error {
 	rf.SetBits(regTimerEMV, 0x08)
 	rf.WriteReg(regMRT, 3) // about 100 us at 512/fc steps
 	rf.ClearBits(regISO14443A, isoNoTxPar|isoNoRxPar|isoNfcF0)
+	// ST's RFAL listen set-up for the ST25R3916 (stm32duino/ST25R3916, src/rfal_rfst25r3916_analogConfigTbl.h,
+	// "Chip-Specific Listen On"): antenna tuning A=0x00 and B=0xFF, over/undershoot protection off. The 3916B
+	// table differs (0x00/0x00). M5Stack's 0x82/0x82 is the poller value from the same table, not the listen one.
 	rf.WriteReg(regAntTune1, 0x00)
 	rf.WriteReg(regAntTune2, 0xFF)
 	for reg := byte(0x30); reg <= 0x33; reg++ {

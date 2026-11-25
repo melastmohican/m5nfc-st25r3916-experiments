@@ -341,6 +341,9 @@ impl Listener {
         Self::set_bits(c, REG_TIMER_EMV, 0x08);
         c.write_reg(REG_MRT, 3); // about 100 us at 512/fc steps
         Self::clear_bits(c, REG_ISO14443A, ISO_NO_TX_PAR | ISO_NO_RX_PAR | ISO_NFC_F0);
+        // ST's RFAL listen set-up for the ST25R3916 (stm32duino/ST25R3916, src/rfal_rfst25r3916_analogConfigTbl.h,
+        // "Chip-Specific Listen On"): antenna tuning A=0x00 and B=0xFF, over/undershoot protection off. The 3916B
+        // table differs (0x00/0x00). M5Stack's 0x82/0x82 is the poller value from the same table, not the listen one.
         c.write_reg(REG_ANT_TUNE1, 0x00);
         c.write_reg(REG_ANT_TUNE2, 0xFF);
         for i in 0..4 {
