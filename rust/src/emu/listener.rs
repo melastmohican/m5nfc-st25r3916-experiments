@@ -54,6 +54,7 @@ const REG_BITRATE_DETECT: u8 = 0x24;
 const REG_ANT_TUNE1: u8 = 0x26;
 const REG_ANT_TUNE2: u8 = 0x27;
 const REG_AUX_DISPLAY: u8 = 0x31;
+const REG_PT_MOD: u8 = 0x29;
 const REG_AUX_MOD: u8 = 0x40 + 0x28; // space B
 const REG_OVERSHOOT_FIRST: u8 = 0x40 + 0x30; // space B, 4 registers
 
@@ -347,6 +348,7 @@ impl Listener {
         }
         // ST's RFAL listen set-up: answer with the chip's internal load modulation (AUX_MOD in
         // register space B: lm_dri on, lm_ext off). The reader-mode init does not touch it.
+        c.write_reg(REG_PT_MOD, 0x5F); // passive target modulation, same value as the other ports and M5Stack
         let aux_mod = c.read_reg(REG_AUX_MOD);
         c.write_reg(REG_AUX_MOD, (aux_mod & !0x20) | 0x10);
         let after = c.read_reg(REG_AUX_MOD);
